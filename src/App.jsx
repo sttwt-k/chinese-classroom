@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { useFirestore, initData } from "./useFirestore";
+import { useFirestore, initData } from "./useFirestore"; 
+import { HomeroomPage } from './HomeroomPage';
 
 // ===== CONSTANTS =====
 const DEFAULT_CLASSES=['ม.1/1','ม.1/2','ม.1/3','ม.2/1','ม.2/2','ม.2/3','ม.3/1','ม.3/2','ม.3/3','ม.4/1','ม.4/2','ม.4/3','ม.5/1','ม.5/2','ม.5/3','ม.6/1','ม.6/2','ม.6/3'];
@@ -10,7 +11,7 @@ const CREDIT_OPTIONS=[0.5,1.0,1.5,2.0,2.5];
 const creditToHours=c=>c*2;
 const CONDUCT_DEF={presentScore:1,absentScore:-1,lateGroup:3,latePenalty:-1,minAttPct:20};
 const C={red:'#C0392B',dark:'#96281B',bg:'#FFF9F0',card:'#fff',border:'#F0E0CC',text:'#2C1810',muted:'#9B7B5C',light:'#FAF0E6'};
-const NAV=[{id:'home',icon:'🏠',label:'หน้าหลัก'},{id:'att',icon:'✓',label:'เช็คชื่อ'},{id:'score',icon:'📊',label:'คะแนน'},{id:'stu',icon:'👥',label:'นักเรียน'},{id:'stat',icon:'📈',label:'สถิติ'},{id:'io',icon:'📥',label:'นำเข้า/ส่งออก'},{id:'set',icon:'⚙️',label:'ตั้งค่า'}];
+const NAV=[{id:'home',icon:'🏠',label:'หน้าหลัก'},{id:'att',icon:'✓',label:'เช็คชื่อ'},{id:'score',icon:'📊',label:'คะแนน'},{id:'stu',icon:'👥',label:'นักเรียน'},{id:'stat',icon:'📈',label:'สถิติ'},{id:'homeroom',icon:'🏫',label:'ประจำชั้น'},{id:'io',icon:'📥',label:'นำเข้า/ส่งออก'},{id:'set',icon:'⚙️',label:'ตั้งค่า'}];
 
 // ===== UTILS =====
 const todayStr=()=>new Date().toISOString().split('T')[0];
@@ -306,14 +307,22 @@ function SettingsPage({data,update,toast}){const[form,setForm]=useState({term:da
 
 // ===== STUDENT APP =====
 function StudentApp({data,update,student,onLogout}){const[tab,setTab]=useState('scores');const[selSubjId,setSelSubjId]=useState(data.subjects[0]?.id||'');const[pinModal,setPinModal]=useState(false);const[pf,setPf]=useState({cur:'',n1:'',n2:''});const[pinErr,setPinErr]=useState('');
-  if(!student)return<div style={{padding:40,textAlign:'center',color:C.red}}>ไม่พบข้อมูล</div>;
+  if(!student)return<div style={{padding:40,textAlign:'center',color:C.red}}>ไม่พบข้อมูล</div>; const isHomeroom = student.classId === data.homeroom;
   const subj=data.subjects.find(s=>s.id===selSubjId);const cats=subj?data.categories.filter(c=>c.subjectId===subj.id):[];const mx=cats.reduce((s,c)=>s+getCatMax(c),0);const tot=cats.reduce((s,c)=>s+getCatScore(student.id,c,data.scores,data.term,data.year),0);const hasAny=cats.some(c=>hasCatScore(student.id,c,data.scores,data.term,data.year));
   const attRate=calcAttRate(student.id,data.attendance,'class',subj?.id);const morningRate=calcAttRate(student.id,data.attendance,'morning');
   const grade=hasAny&&subj?getSubjectGrade(student.id,subj,data.categories,data.scores,data.term,data.year,data.attendance,data.conduct):null;const conduct=calcConduct(student.id,data.attendance,data.conduct,subj?.id);
   const myAtt=data.attendance.filter(a=>a.studentId===student.id).sort((a,b)=>b.date.localeCompare(a.date));
   const changePin=()=>{if(pf.cur!==student.pin)return setPinErr('PIN ไม่ถูก');if(!/^\d{4}$/.test(pf.n1))return setPinErr('ต้อง 4 หลัก');if(pf.n1!==pf.n2)return setPinErr('ไม่ตรงกัน');update(prev=>({...prev,students:prev.students.map(s=>s.id===student.id?{...s,pin:pf.n1}:s)}));setPinModal(false);setPf({cur:'',n1:'',n2:''});};
   return(<div style={{minHeight:'100vh',background:C.bg}}><div style={{background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',padding:'14px 16px'}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:700,fontSize:18}}>{student.nickname||student.name}{student.chineseName&&<span style={{fontSize:14,marginLeft:6,opacity:0.85}}>{student.chineseName}</span>}</div><div style={{fontSize:12,opacity:0.85}}>{student.id} · {student.classId} · ภาคเรียน {data.term}/{data.year}</div></div><div style={{display:'flex',gap:6}}><button onClick={()=>setPinModal(true)} style={{background:'rgba(255,255,255,0.2)',border:'none',color:'white',padding:'7px 12px',borderRadius:8,cursor:'pointer',fontSize:13,fontFamily:'inherit'}}>🔑</button><button onClick={onLogout} style={{background:'rgba(255,255,255,0.2)',border:'none',color:'white',padding:'7px 12px',borderRadius:8,cursor:'pointer',fontSize:13,fontFamily:'inherit'}}>ออก</button></div></div></div>
-    <div style={{display:'flex',background:'white',borderBottom:`1px solid ${C.border}`}}>{[['scores','📊 คะแนน'],['att','✓ เข้าเรียน']].map(([v,l])=><button key={v} onClick={()=>setTab(v)} style={{flex:1,padding:'13px 8px',border:'none',cursor:'pointer',background:'transparent',fontWeight:tab===v?700:400,color:tab===v?C.red:C.muted,borderBottom:`2.5px solid ${tab===v?C.red:'transparent'}`,fontSize:14,fontFamily:'inherit'}}>{l}</button>)}</div>
+    <div style={{display:'flex',background:'white',borderBottom:`1px solid ${C.border}`}}>
+  {[
+    ['scores','📊 คะแนน'],
+    ['att','✓ เข้าเรียน'],
+    ...(isHomeroom ? [['homeroom','🏫 ประจำชั้น']] : [])
+  ].map(([v,l])=>
+    <button key={v} onClick={()=>setTab(v)} style={{flex:1,padding:'13px 8px',border:'none',cursor:'pointer',background:'transparent',fontWeight:tab===v?700:400,color:tab===v?C.red:C.muted,borderBottom:`2.5px solid ${tab===v?C.red:'transparent'}`,fontSize:14,fontFamily:'inherit'}}>{l}</button>
+  )}
+</div>
     <div style={{padding:16}}>
       {tab==='scores'&&<div>
         {data.subjects.length>1&&<select value={selSubjId} onChange={e=>setSelSubjId(e.target.value)} style={{...sInp,marginBottom:12,fontFamily:'inherit'}}>{data.subjects.map(s=><option key={s.id} value={s.id}>{s.code?`${s.code} ${s.name}`:s.name}</option>)}</select>}
@@ -327,7 +336,16 @@ function StudentApp({data,update,student,onLogout}){const[tab,setTab]=useState('
           <div style={{fontSize:13}}>จิตพิสัย: <b>{conduct.score>0?'+':''}{conduct.score}</b></div>
           <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:5,marginTop:8}}>{S_ORDER.map(k=><div key={k} style={{background:'rgba(255,255,255,0.15)',borderRadius:6,padding:'6px 4px'}}><div style={{fontSize:16,fontWeight:700}}>{conduct.counts[k]}</div><div style={{fontSize:11}}>{STATUS[k].label}</div></div>)}</div></div>
         {myAtt.slice(0,60).map((a,i)=>{const sj=data.subjects.find(x=>x.id===a.subjectId);return<div key={i} style={{...sCard,marginBottom:5,padding:'10px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontSize:14,fontWeight:500}}>{fmtDate(a.date)}</div><div style={{fontSize:12,color:C.muted}}>{a.type==='morning'?'🌅 เข้าแถว':`📚 ${sj?.code||sj?.name||'คาบ'}${a.period?` คาบ${a.period}`:''}`}</div></div><span style={{background:STATUS[a.status]?.bg||'#999',color:'white',fontSize:13,padding:'4px 12px',borderRadius:20,fontWeight:600}}>{STATUS[a.status]?.label}{STATUS[a.status]?.custom&&a.customScore!==undefined?` (${a.customScore>0?'+':''}${a.customScore})`:''}</span></div>;})}
-      </div>}</div>
+      </div>}
+      {tab==='homeroom' && isHomeroom && (
+  <HomeroomPage
+    data={data}
+    update={update}
+    role="student"
+    currentStudentId={student.id}
+    toast={(msg) => alert(msg)}
+  />
+)}</div>
     <Sheet open={pinModal} title="🔑 เปลี่ยน PIN" onClose={()=>{setPinModal(false);setPinErr('');}}><input type="password" placeholder="PIN ปัจจุบัน" value={pf.cur} onChange={e=>setPf(p=>({...p,cur:e.target.value}))} style={{...sInp,marginBottom:8}} maxLength={4}/><input type="password" placeholder="PIN ใหม่ 4 หลัก" value={pf.n1} onChange={e=>setPf(p=>({...p,n1:e.target.value.replace(/\D/g,'').slice(0,4)}))} style={{...sInp,marginBottom:8}} maxLength={4}/><input type="password" placeholder="ยืนยัน" value={pf.n2} onChange={e=>setPf(p=>({...p,n2:e.target.value.replace(/\D/g,'').slice(0,4)}))} style={{...sInp,marginBottom:12}} maxLength={4}/>{pinErr&&<div style={{color:C.red,fontSize:13,marginBottom:10,padding:'6px 10px',background:'#fff0f0',borderRadius:6}}>{pinErr}</div>}<div style={{display:'flex',gap:8}}><button onClick={()=>{setPinModal(false);setPinErr('');}} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={changePin} style={{...sBtn(true),flex:1}}>บันทึก</button></div></Sheet>
   </div>);}
 
@@ -335,7 +353,7 @@ function StudentApp({data,update,student,onLogout}){const[tab,setTab]=useState('
 function TeacherApp({data,update,onLogout}){const[page,setPage]=useState('home');const[drawerOpen,setDrawerOpen]=useState(false);const[fabOpen,setFabOpen]=useState(false);const[attInit,setAttInit]=useState(null);const[toastMsg,setToastMsg]=useState({msg:'',type:'info'});
   const toast=useCallback((msg,type='info')=>setToastMsg({msg,type}),[]);const openAtt=(type,classId)=>{setAttInit({type,classId});setPage('att');};useEffect(()=>{if(page!=='att')setAttInit(null);},[page]);const pageObj=NAV.find(n=>n.id===page);
   return(<div style={{minHeight:'100vh',background:C.bg}}><TopBar onMenu={()=>setDrawerOpen(true)} onLogout={onLogout} label={pageObj?`${pageObj.icon} ${pageObj.label}`:''}/><Drawer open={drawerOpen} onClose={()=>setDrawerOpen(false)} current={page} onNav={setPage} data={data}/>
-    {page==='home'&&<Dashboard data={data} setPage={setPage} openAtt={openAtt}/>}{page==='att'&&<AttendancePage data={data} update={update} initType={attInit?.type} initClass={attInit?.classId} toast={toast}/>}{page==='score'&&<ScoresPage data={data} update={update} toast={toast}/>}{page==='stu'&&<StudentsPage data={data} update={update} toast={toast}/>}{page==='stat'&&<StatsPage data={data}/>}{page==='io'&&<IOPage data={data} update={update} toast={toast}/>}{page==='set'&&<SettingsPage data={data} update={update} toast={toast}/>}
+    {page==='home'&&<Dashboard data={data} setPage={setPage} openAtt={openAtt}/>}{page==='att'&&<AttendancePage data={data} update={update} initType={attInit?.type} initClass={attInit?.classId} toast={toast}/>}{page==='score'&&<ScoresPage data={data} update={update} toast={toast}/>}{page==='stu'&&<StudentsPage data={data} update={update} toast={toast}/>}{page==='stat'&&<StatsPage data={data}/>}{page==='io'&&<IOPage data={data} update={update} toast={toast}/>}{page==='homeroom'&&<HomeroomPage data={data} update={update} role="teacher" currentStudentId={null} toast={toast}/>}{page==='set'&&<SettingsPage data={data} update={update} toast={toast}/>}
     <button onClick={()=>setFabOpen(true)} style={{position:'fixed',bottom:24,right:20,width:58,height:58,borderRadius:30,background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',border:'none',fontSize:28,cursor:'pointer',boxShadow:'0 6px 20px rgba(192,57,43,0.45)',zIndex:40,display:'flex',alignItems:'center',justifyContent:'center'}}>+</button>
     <Sheet open={fabOpen} title="➕ เพิ่มรายการ" onClose={()=>setFabOpen(false)}><div style={{display:'flex',flexDirection:'column',gap:8}}><button onClick={()=>{setFabOpen(false);openAtt('morning',data.homeroom);}} style={{padding:'14px 16px',background:'linear-gradient(135deg,#0891b2,#0e7490)',color:'white',border:'none',borderRadius:12,cursor:'pointer',textAlign:'left',fontFamily:'inherit'}}><div style={{fontWeight:700,fontSize:15}}>🌅 เช็คชื่อเข้าแถว</div><div style={{fontSize:12,opacity:0.85}}>{data.homeroom}</div></button><button onClick={()=>{setFabOpen(false);openAtt('class');}} style={{padding:'14px 16px',background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',border:'none',borderRadius:12,cursor:'pointer',textAlign:'left',fontFamily:'inherit'}}><div style={{fontWeight:700,fontSize:15}}>📚 เช็คชื่อคาบเรียน</div><div style={{fontSize:12,opacity:0.85}}>เลือกวิชา + คาบ</div></button><button onClick={()=>{setFabOpen(false);setPage('score');}} style={{padding:'14px 16px',background:'linear-gradient(135deg,#d97706,#b45309)',color:'white',border:'none',borderRadius:12,cursor:'pointer',textAlign:'left',fontFamily:'inherit'}}><div style={{fontWeight:700,fontSize:15}}>📊 บันทึกคะแนน</div></button><button onClick={()=>{setFabOpen(false);setPage('stu');}} style={{padding:'14px 16px',background:C.light,color:C.text,border:`1.5px solid ${C.border}`,borderRadius:12,cursor:'pointer',textAlign:'left',fontFamily:'inherit'}}><div style={{fontWeight:700,fontSize:15}}>👤 เพิ่มนักเรียน</div></button></div></Sheet>
     <Toast msg={toastMsg.msg} type={toastMsg.type} onClose={()=>setToastMsg({msg:'',type:'info'})}/></div>);}

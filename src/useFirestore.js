@@ -2,6 +2,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { db } from "./firebase";
 import { doc, setDoc, onSnapshot } from "firebase/firestore";
+import { storage } from "./firebase";                               // ← เพิ่ม
+import { ref, uploadString, getDownloadURL } from "firebase/storage"; // ← เพิ่ม
 
 const DOC_ID = "main_data";
 const COLLECTION = "app_data";
@@ -12,26 +14,46 @@ const DEFAULT_CLASSES = [
   'ม.5/1','ม.5/2','ม.5/3','ม.6/1','ม.6/2','ม.6/3'
 ];
 
+// ===== เพิ่มส่วนนี้ทั้งหมด ก่อน initData =====
+const isBase64 = s => typeof s === 'string' && s.startsWith('data:image');
+
+const uploadImg = async (base64, path) => {
+  try {
+    const r = ref(storage, path);
+    await uploadString(r, base64, 'data_url');
+    return await getDownloadURL(r);
+  } catch (e) {
+    console.error('Upload error:', e);
+    return base64; // fallback ถ้า upload ไม่สำเร็จ
+  }
+};
+
+const processProfiles = async (profiles) => {
+  const result = {};
+  for (const [sid, profile] of Object.entries(profiles || {})) {
+    const p = { ...profile };
+    if (isBase64(p.profilePhoto)) {
+      p.profilePhoto = await uploadImg(
+        p.profilePhoto, `profiles/${sid}/photo.jpg`
+      );
+    }
+    if (Array.isArray(p.homePhotos)) {
+      p.homePhotos = await Promise.all(
+        p.homePhotos.map((ph, i) =>
+          isBase64(ph)
+            ? uploadImg(ph, `profiles/${sid}/home_${i}.jpg`)
+            : Promise.resolve(ph)
+        )
+      );
+    }
+    result[sid] = p;
+  }
+  return result;
+};
+// ===== จบส่วนที่เพิ่ม =====
+
 export const initData = () => ({
-  password: "0000",
-  homeroom: "ม.5/2",
-  classes: [...DEFAULT_CLASSES],
-  subjects: [{ id: "sub_chinese", name: "ภาษาจีน", code: "จ", credits: 1.0 }],
-  students: [],
-  attendance: [],
-  scores: [],
-  categories: [
-    { id: "hw", name: "การบ้าน", subjectId: "sub_chinese", max: 20, subs: [] },
-    { id: "mid", name: "กลางภาค", subjectId: "sub_chinese", max: 30, subs: [] },
-    { id: "final", name: "ปลายภาค", subjectId: "sub_chinese", max: 40, subs: [] },
-    { id: "proj", name: "งาน/โปรเจกต์", subjectId: "sub_chinese", max: 10, subs: [] },
-  ],
-  conduct: {
-    presentScore: 1, absentScore: -1,
-    lateGroup: 3, latePenalty: -1, minAttPct: 20,
-  },
-  term: 1,
-  year: 2568,
+  // ... เหมือนเดิมทุกอย่าง
 });
 
 export function useFirestore() {
@@ -39,44 +61,24 @@ export function useFirestore() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const docRef = doc(db, COLLECTION, DOC_ID);
-    const unsubscribe = onSnapshot(docRef, (snapshot) => {
-      if (snapshot.exists()) {
-        const d = snapshot.data();
-        // Migration: ตรวจสอบ field ใหม่
-        d.classes = d.classes || [...DEFAULT_CLASSES];
-        d.homeroom = d.homeroom || "ม.5/2";
-        d.conduct = d.conduct || initData().conduct;
-        d.subjects = d.subjects || initData().subjects;
-        d.students = (d.students || []).map((s) => ({
-          ...s,
-          nickname: s.nickname || "",
-          pin: /^\d{4}$/.test(s.pin) ? s.pin
-            : Math.floor(1000 + Math.random() * 9000).toString(),
-        }));
-        d.categories = (d.categories || []).map((c) => ({
-          ...c,
-          subs: c.subs || [],
-          subjectId: c.subjectId || d.subjects[0]?.id || "",
-        }));
-        setData(d);
-      } else {
-        const fresh = initData();
-        setDoc(docRef, fresh);
-        setData(fresh);
-      }
-      setLoading(false);
-    });
-    return () => unsubscribe();
+    // ... เหมือนเดิมทุกอย่าง
   }, []);
 
+  // ===== แก้แค่ update function นี้ =====
   const update = useCallback((fn) => {
     setData((prev) => {
       const next = fn(prev);
-      const docRef = doc(db, COLLECTION, DOC_ID);
-      setDoc(docRef, next).catch((err) =>
-        console.error("Firebase save error:", err)
-      );
+
+      const save = async () => {
+        const toSave = { ...next };
+        if (toSave.profiles) {
+          toSave.profiles = await processProfiles(toSave.profiles);
+        }
+        const docRef = doc(db, COLLECTION, DOC_ID);
+        await setDoc(docRef, toSave);
+      };
+
+      save().catch(err => console.error("Firebase save error:", err));
       return next;
     });
   }, []);
