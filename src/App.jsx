@@ -97,6 +97,7 @@ const processProfiles = async (profiles) => {
 
 const initData = () => ({
   appName: 'ห้องเรียนของคุณครูต้นฝน',
+  teacherUsername: 'puntoy',
   password: '0000',
   term: 1,
   year: 2569,
@@ -204,15 +205,18 @@ function LoginScreen({data,onLogin}){
   const[err,setErr]=useState('');
 
   const doLogin=()=>{
-    if(id===data.password){
+    const tUser = data.teacherUsername || 'puntoy';
+    const tPass = data.password || '0000';
+    
+    if(id.trim() === tUser && pin === tPass){
       onLogin({role:'teacher'});
     }else{
       const s=data.students.find(x=>x.id===id.trim());
       if(s){
         if(s.pin===pin) onLogin({role:'student',id:s.id});
-        else setErr('PIN ของนักเรียนไม่ถูกต้อง');
+        else setErr('PIN ไม่ถูกต้อง');
       }else{
-        setErr('รหัสผ่านครู หรือ รหัสนักเรียน ไม่ถูกต้อง');
+        setErr('ชื่อผู้ใช้ / รหัสนักเรียน หรือ รหัสผ่าน ไม่ถูกต้อง');
       }
     }
   };
@@ -226,15 +230,11 @@ function LoginScreen({data,onLogin}){
       </div>
       
       <div style={{...sCard,width:'100%',maxWidth:340}}>
-        <div style={{fontSize:13,color:C.muted,marginBottom:12,textAlign:'center',background:C.light,padding:'8px',borderRadius:8}}>
-          💡 <b>สำหรับครู (ครั้งแรก):</b> พิมพ์ <b>0000</b> ในช่องแรก แล้วกดเข้าสู่ระบบได้เลย (เว้นช่อง PIN ไว้)
-        </div>
+        <label style={{fontSize:12,color:C.muted,marginBottom:4,display:'block'}}>ชื่อผู้ใช้ (ครู) หรือ รหัสนักเรียน</label>
+        <input placeholder="Username หรือ รหัสนักเรียน" value={id} onChange={e=>setId(e.target.value)} onKeyDown={e=>e.key==='Enter'&&doLogin()} style={{...sInp,marginBottom:12}} autoFocus/>
         
-        <label style={{fontSize:12,color:C.muted,marginBottom:4,display:'block'}}>รหัสผ่านครู หรือ รหัสนักเรียน</label>
-        <input placeholder="เช่น 0000 หรือ รหัสนักเรียน" value={id} onChange={e=>setId(e.target.value)} onKeyDown={e=>e.key==='Enter'&&doLogin()} style={{...sInp,marginBottom:12}} autoFocus/>
-        
-        <label style={{fontSize:12,color:C.muted,marginBottom:4,display:'block'}}>PIN 4 หลัก (สำหรับนักเรียนเท่านั้น)</label>
-        <input type="password" placeholder="ครูไม่ต้องกรอกช่องนี้" value={pin} onChange={e=>setPin(e.target.value)} onKeyDown={e=>e.key==='Enter'&&doLogin()} style={{...sInp,marginBottom:16}} maxLength={4}/>
+        <label style={{fontSize:12,color:C.muted,marginBottom:4,display:'block'}}>รหัสผ่าน (ครู) หรือ PIN 4 หลัก (นักเรียน)</label>
+        <input type="password" placeholder="รหัสผ่าน หรือ PIN" value={pin} onChange={e=>setPin(e.target.value)} onKeyDown={e=>e.key==='Enter'&&doLogin()} style={{...sInp,marginBottom:16}}/>
         
         {err&&<div style={{color:C.red,fontSize:13,marginBottom:12,padding:'8px 10px',background:'#fff0f0',borderRadius:6,textAlign:'center'}}>{err}</div>}
         
@@ -481,19 +481,68 @@ function IOPage({data,update,toast}){
   </div>);}
 
 // ===== SETTINGS =====
-function SettingsPage({data,update,toast}){const[form,setForm]=useState({appName:data.appName||'ห้องเรียนของคุณครูต้นฝน',term:data.term,year:data.year,homeroom:data.homeroom,password:'',presentScore:data.conduct.presentScore,absentScore:data.conduct.absentScore,lateGroup:data.conduct.lateGroup,latePenalty:data.conduct.latePenalty,minAttPct:data.conduct.minAttPct});
+function SettingsPage({data,update,toast}){
+  const[form,setForm]=useState({
+    appName:data.appName||'ห้องเรียนของคุณครูต้นฝน',
+    term:data.term,
+    year:data.year,
+    homeroom:data.homeroom,
+    teacherUsername:data.teacherUsername||'puntoy',
+    password:'',
+    presentScore:data.conduct.presentScore,
+    absentScore:data.conduct.absentScore,
+    lateGroup:data.conduct.lateGroup,
+    latePenalty:data.conduct.latePenalty,
+    minAttPct:data.conduct.minAttPct
+  });
+  
   const sortedCls=useMemo(()=>sortClasses(data.classes),[data.classes]);
-  const save=()=>{update(prev=>({...prev,appName:form.appName.trim()||prev.appName,term:parseInt(form.term)||prev.term,year:parseInt(form.year)||prev.year,homeroom:form.homeroom,password:form.password.trim()||prev.password,conduct:{presentScore:parseFloat(form.presentScore)||0,absentScore:parseFloat(form.absentScore)||0,lateGroup:parseInt(form.lateGroup)||3,latePenalty:parseFloat(form.latePenalty)||0,minAttPct:parseInt(form.minAttPct)||20}}));toast('บันทึกแล้ว','success');setForm(p=>({...p,password:''}));};
-  const wipe=()=>{if(!window.confirm('ล้างข้อมูลทั้งหมด?'))return;if(!window.confirm('ยืนยัน?'))return;update(()=>initData());toast('ล้างแล้ว','success');};
-  return(<div style={{padding:'14px 14px 100px'}}><div style={{fontWeight:700,fontSize:18,marginBottom:12,color:C.text}}>⚙️ ตั้งค่า</div>
-    <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:8}}>🏫 ชื่อแอปพลิเคชัน</div><input value={form.appName} onChange={e=>setForm(p=>({...p,appName:e.target.value}))} style={sInp}/></div>
-    <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:10}}>📅 ภาคเรียน</div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ภาคเรียน</div><select value={form.term} onChange={e=>setForm(p=>({...p,term:e.target.value}))} style={sInp}><option value={1}>1</option><option value={2}>2</option></select></div><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ปี (พ.ศ.)</div><input type="number" value={form.year} onChange={e=>setForm(p=>({...p,year:e.target.value}))} style={sInp}/></div></div>
-      <div style={{fontSize:12,color:C.muted,marginBottom:4}}>ห้องประจำชั้น</div><select value={form.homeroom} onChange={e=>setForm(p=>({...p,homeroom:e.target.value}))} style={{...sInp,fontFamily:'inherit'}}>{sortedCls.map(c=><option key={c} value={c}>{c}</option>)}</select></div>
-    <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:4}}>🎯 จิตพิสัย (คาบเรียน)</div><div style={{fontSize:12,color:C.muted,marginBottom:10}}>ลา/กิจกรรม: +มา · -ขาด · 0=สาย</div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>มา (+)</div><input type="number" step="0.5" value={form.presentScore} onChange={e=>setForm(p=>({...p,presentScore:e.target.value}))} style={sInp}/></div><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ขาด (-)</div><input type="number" step="0.5" value={form.absentScore} onChange={e=>setForm(p=>({...p,absentScore:e.target.value}))} style={sInp}/></div></div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>สาย ทุก N</div><input type="number" value={form.lateGroup} onChange={e=>setForm(p=>({...p,lateGroup:e.target.value}))} style={sInp}/></div><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>หัก</div><input type="number" step="0.5" value={form.latePenalty} onChange={e=>setForm(p=>({...p,latePenalty:e.target.value}))} style={sInp}/></div></div></div>
-    <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:8}}>🚨 มส. (เข้าเรียนต่ำกว่า %)</div><input type="number" value={form.minAttPct} onChange={e=>setForm(p=>({...p,minAttPct:e.target.value}))} style={sInp}/></div>
-    <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:8}}>🔐 รหัสผ่านครู</div><input type="password" value={form.password} onChange={e=>setForm(p=>({...p,password:e.target.value}))} style={sInp} placeholder="เว้นว่าง = ไม่เปลี่ยน"/></div>
-    <button onClick={save} style={{...sBtn(true),width:'100%',padding:14,fontSize:16,marginBottom:12}}>💾 บันทึกการตั้งค่า</button>
-    <button onClick={wipe} style={{width:'100%',padding:10,background:'#fff5f5',color:'#dc2626',border:'1px solid #fecaca',borderRadius:8,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>🗑 ล้างข้อมูลทั้งหมด</button></div>);}
+  
+  const save=()=>{
+    update(prev=>({
+      ...prev,
+      appName:form.appName.trim()||prev.appName,
+      term:parseInt(form.term)||prev.term,
+      year:parseInt(form.year)||prev.year,
+      homeroom:form.homeroom,
+      teacherUsername:form.teacherUsername.trim()||'puntoy',
+      password:form.password.trim()||prev.password,
+      conduct:{
+        presentScore:parseFloat(form.presentScore)||0,
+        absentScore:parseFloat(form.absentScore)||0,
+        lateGroup:parseInt(form.lateGroup)||3,
+        latePenalty:parseFloat(form.latePenalty)||0,
+        minAttPct:parseInt(form.minAttPct)||20
+      }
+    }));
+    toast('บันทึกการตั้งค่าแล้ว','success');
+    setForm(p=>({...p,password:''}));
+  };
+  
+  const wipe=()=>{if(!window.confirm('ล้างข้อมูลทั้งหมด?'))return;if(!window.confirm('ยืนยัน?'))return;update(()=>initData());toast('ล้างข้อมูลแล้ว','success');};
+  
+  return(
+    <div style={{padding:'14px 14px 100px'}}>
+      <div style={{fontWeight:700,fontSize:18,marginBottom:12,color:C.text}}>⚙️ ตั้งค่า</div>
+      <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:8}}>🏫 ชื่อแอปพลิเคชัน</div><input value={form.appName} onChange={e=>setForm(p=>({...p,appName:e.target.value}))} style={sInp}/></div>
+      <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:10}}>📅 ภาคเรียน</div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ภาคเรียน</div><select value={form.term} onChange={e=>setForm(p=>({...p,term:e.target.value}))} style={sInp}><option value={1}>1</option><option value={2}>2</option></select></div><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ปี (พ.ศ.)</div><input type="number" value={form.year} onChange={e=>setForm(p=>({...p,year:e.target.value}))} style={sInp}/></div></div>
+        <div style={{fontSize:12,color:C.muted,marginBottom:4}}>ห้องประจำชั้น</div><select value={form.homeroom} onChange={e=>setForm(p=>({...p,homeroom:e.target.value}))} style={{...sInp,fontFamily:'inherit'}}>{sortedCls.map(c=><option key={c} value={c}>{c}</option>)}</select></div>
+      <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:4}}>🎯 จิตพิสัย (คาบเรียน)</div><div style={{fontSize:12,color:C.muted,marginBottom:10}}>ลา/กิจกรรม: +มา · -ขาด · 0=สาย</div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>มา (+)</div><input type="number" step="0.5" value={form.presentScore} onChange={e=>setForm(p=>({...p,presentScore:e.target.value}))} style={sInp}/></div><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ขาด (-)</div><input type="number" step="0.5" value={form.absentScore} onChange={e=>setForm(p=>({...p,absentScore:e.target.value}))} style={sInp}/></div></div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>สาย ทุก N</div><input type="number" value={form.lateGroup} onChange={e=>setForm(p=>({...p,lateGroup:e.target.value}))} style={sInp}/></div><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>หัก</div><input type="number" step="0.5" value={form.latePenalty} onChange={e=>setForm(p=>({...p,latePenalty:e.target.value}))} style={sInp}/></div></div></div>
+      <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:8}}>🚨 มส. (เข้าเรียนต่ำกว่า %)</div><input type="number" value={form.minAttPct} onChange={e=>setForm(p=>({...p,minAttPct:e.target.value}))} style={sInp}/></div>
+      
+      <div style={sCard}>
+        <div style={{fontWeight:700,fontSize:14,marginBottom:8}}>🔐 บัญชีครูผู้สอน</div>
+        <div style={{fontSize:12,color:C.muted,marginBottom:4}}>ชื่อผู้ใช้ (Username)</div>
+        <input value={form.teacherUsername} onChange={e=>setForm(p=>({...p,teacherUsername:e.target.value}))} style={{...sInp,marginBottom:10}} placeholder="เช่น puntoy"/>
+        <div style={{fontSize:12,color:C.muted,marginBottom:4}}>รหัสผ่านใหม่ (ทิ้งว่างถ้าไม่ต้องการเปลี่ยน)</div>
+        <input type="password" value={form.password} onChange={e=>setForm(p=>({...p,password:e.target.value}))} style={sInp} placeholder="เว้นว่าง = ไม่เปลี่ยน"/>
+      </div>
+      
+      <button onClick={save} style={{...sBtn(true),width:'100%',padding:14,fontSize:16,marginBottom:12}}>💾 บันทึกการตั้งค่า</button>
+      <button onClick={wipe} style={{width:'100%',padding:10,background:'#fff5f5',color:'#dc2626',border:'1px solid #fecaca',borderRadius:8,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>🗑 ล้างข้อมูลทั้งหมด</button>
+    </div>
+  );
+}
 
 // ===== STUDENT APP =====
 function StudentApp({data,update,student,onLogout}){
