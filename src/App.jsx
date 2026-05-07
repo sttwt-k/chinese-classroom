@@ -11,8 +11,19 @@ const GRADE_SCALE=[{label:'4',min:80,gpa:4},{label:'3.5',min:75,gpa:3.5},{label:
 const CREDIT_OPTIONS=[0.5,1.0,1.5,2.0,2.5];
 const creditToHours=c=>c*2;
 const CONDUCT_DEF={presentScore:1,absentScore:-1,lateGroup:3,latePenalty:-1,minAttPct:20};
-const C={red:'#C0392B',dark:'#96281B',bg:'#FFF9F0',card:'#fff',border:'#F0E0CC',text:'#2C1810',muted:'#9B7B5C',light:'#FAF0E6'};
+const C={red:'#C0392B',dark:'#96281B',bg:'#FFF9F0',card:'#fff',border:'#F0E0CC',text:'#2C1810',muted:'#9B7B5C',light:'#FAF0E6',blue:'#0891b2'};
 const NAV=[{id:'home',icon:'🏠',label:'หน้าหลัก'},{id:'att',icon:'✓',label:'เช็คชื่อ'},{id:'score',icon:'📊',label:'คะแนน'},{id:'stu',icon:'👥',label:'นักเรียน'},{id:'stat',icon:'📈',label:'สถิติ'},{id:'homeroom',icon:'🏫',label:'ประจำชั้น'},{id:'io',icon:'📥',label:'นำเข้า/ส่งออก'},{id:'set',icon:'⚙️',label:'ตั้งค่า'}];
+
+const BLOOD_TYPES = ['A','B','AB','O','ไม่ทราบ'];
+const RELIGIONS = ['พุทธ','คริสต์','อิสลาม','พราหมณ์-ฮินดู','อื่นๆ'];
+const MARITAL = ['จดทะเบียนสมรส','หย่าร้าง','อยู่ด้วยกันแบบไม่จดทะเบียนสมรส','บิดาเสียชีวิต','มารดาเสียชีวิต'];
+
+// ===== STYLES =====
+const sCard={background:C.card,borderRadius:12,border:`1px solid ${C.border}`,padding:16,marginBottom:12};
+const sBtn=(p=true,sm=false)=>({padding:sm?'7px 14px':'10px 20px',borderRadius:8,fontWeight:600,cursor:'pointer',border:'none',background:p?C.red:C.light,color:p?'white':C.text,fontSize:sm?13:15,fontFamily:'inherit'});
+const sInp={padding:'10px 12px',borderRadius:8,border:`1.5px solid ${C.border}`,width:'100%',fontSize:14,background:C.card,color:C.text,boxSizing:'border-box',fontFamily:'inherit'};
+const sTab=a=>({padding:'9px 14px',borderRadius:8,cursor:'pointer',border:'none',fontWeight:a?700:500,background:a?C.red:'transparent',color:a?'white':C.muted,fontSize:13,fontFamily:'inherit',whiteSpace:'nowrap'});
+const sLabel={fontSize:12,color:C.muted,marginBottom:4,display:'block'};
 
 // ===== UTILS =====
 const todayStr=()=>new Date().toISOString().split('T')[0];
@@ -32,15 +43,64 @@ const calcConduct=(sid,att,cfg=CONDUCT_DEF,subjId=null)=>{const a=att.filter(x=>
 const calcAttRate=(sid,att,type='class',subjId=null)=>{const a=att.filter(x=>x.studentId===sid&&x.type===type&&(!subjId||x.subjectId===subjId));if(!a.length)return null;const ok=a.filter(x=>{if(x.status==='present'||x.status==='late')return true;if(STATUS[x.status]?.custom)return(x.customScore||0)>=0;return false;}).length;return Math.round(ok/a.length*100);};
 const getSubjectGrade=(sid,subj,cats,scores,term,year,att,conduct)=>{const rate=calcAttRate(sid,att,'class',subj.id);if(rate!==null&&rate<conduct.minAttPct)return{label:'มส.',gpa:0,special:true,color:'#dc2626'};const sc=cats.filter(c=>c.subjectId===subj.id);if(sc.some(c=>hasIncomplete(sid,c,scores,term,year)&&hasCatScore(sid,c,scores,term,year)))return{label:'ร',gpa:0,special:true,color:'#d97706'};const tot=sc.reduce((s,c)=>s+getCatScore(sid,c,scores,term,year),0);const mx=sc.reduce((s,c)=>s+getCatMax(c),0);if(!sc.some(c=>hasCatScore(sid,c,scores,term,year)))return null;return getGrade(tot,mx);};
 const sortClasses=cls=>[...cls].sort((a,b)=>{const p=c=>{const m=c.match(/ม\.(\d+)\/(\d+)/);return m?parseInt(m[1])*100+parseInt(m[2]):999;};return p(a)-p(b);});
-const subjLabel=s=>s?`${s.code||s.name}${s.code?' '+s.name:''}`:'-';
-const subjShort=s=>s?`${s.code||''} ${s.name}`.trim():'-';
 const dateInRange=(ds,range)=>{if(range==='term')return true;const d=new Date(ds+'T00:00:00'),now=new Date();now.setHours(0,0,0,0);if(range==='today')return ds===todayStr();if(range==='week'){const w=new Date(now);w.setDate(w.getDate()-7);return d>=w;}if(range==='month'){const m=new Date(now);m.setDate(m.getDate()-30);return d>=m;}return true;};
 
-// ===== STYLES =====
-const sCard={background:C.card,borderRadius:12,border:`1px solid ${C.border}`,padding:16,marginBottom:12};
-const sBtn=(p=true,sm=false)=>({padding:sm?'7px 14px':'10px 20px',borderRadius:8,fontWeight:600,cursor:'pointer',border:'none',background:p?C.red:C.light,color:p?'white':C.text,fontSize:sm?13:15,fontFamily:'inherit'});
-const sInp={padding:'10px 12px',borderRadius:8,border:`1.5px solid ${C.border}`,width:'100%',fontSize:15,background:C.card,color:C.text,boxSizing:'border-box',fontFamily:'inherit'};
-const sTab=a=>({padding:'9px 16px',borderRadius:8,cursor:'pointer',border:'none',fontWeight:a?700:500,background:a?C.red:'transparent',color:a?'white':C.muted,fontSize:14,fontFamily:'inherit'});
+// ===== IMAGE COMPRESSION =====
+const compressImg = (file, maxPx=800, q=0.75) => new Promise(res => {
+  const r = new FileReader();
+  r.onload = e => {
+    const img = new Image();
+    img.onload = () => {
+      const ratio = Math.min(1, maxPx/img.width, maxPx/img.height);
+      const cv = document.createElement('canvas');
+      cv.width = img.width*ratio; cv.height = img.height*ratio;
+      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+      res(cv.toDataURL('image/jpeg', q));
+    };
+    img.src = e.target.result;
+  };
+  r.readAsDataURL(file);
+});
+
+// ===== DATA MODELS =====
+const emptyProfile = () => ({
+  idCard:'', birthday:'', age:'', bloodType:'', ethnicity:'ไทย', nationality:'ไทย', religion:'พุทธ',
+  weight:'', height:'', disease:'',
+  houseNo:'', village:'', road:'', subDistrict:'', district:'', province:'', postalCode:'',
+  familyCount:'', siblingCount:'', childOrder:'',
+  brotherOlder:0, brotherYounger:0, sisterOlder:0, sisterYounger:0,
+  fatherName:'', fatherSurname:'', fatherAge:'', fatherJob:'',
+  motherName:'', motherSurname:'', motherAge:'', motherJob:'',
+  maritalStatus:'', livesWith:'', relationship:'',
+  guardianPhone:'', guardianLine:'', studentPhone:'', studentLine:'',
+  profilePhoto:'', homePhotos:[], updatedAt:'',
+});
+
+const emptyGoal = () => ({ goalName:'', goal:0, goalDate:'', entries:[] });
+
+const profileCompletion = p => {
+  if (!p) return 0;
+  const req = ['idCard','birthday','bloodType','houseNo','province','fatherName','motherName','guardianPhone'];
+  const filled = req.filter(k => p[k]?.toString().trim()).length;
+  const photo = p.profilePhoto ? 1 : 0;
+  const homePhotos = (p.homePhotos?.length || 0) >= 2 ? 1 : 0;
+  return Math.round(((filled + photo + homePhotos) / (req.length + 2)) * 100);
+};
+
+const calcSavings = s => {
+  if (!s) return { total:0, goal:0, remaining:0, pct:0, daysLeft:0, dailyNeeded:0 };
+  const entries = s.entries || [];
+  const total = entries.reduce((sum, e) => sum + (parseFloat(e.amount)||0), 0);
+  const goal = parseFloat(s.goal) || 0;
+  const remaining = Math.max(0, goal - total);
+  const pct = goal > 0 ? Math.min(100, Math.round(total/goal*100)) : 0;
+  let daysLeft = 0, dailyNeeded = 0;
+  if (s.goalDate) {
+    daysLeft = Math.max(0, Math.ceil((new Date(s.goalDate+'T00:00:00') - new Date()) / 86400000));
+    dailyNeeded = daysLeft > 0 ? Math.ceil(remaining/daysLeft) : remaining;
+  }
+  return { total, goal, remaining, pct, daysLeft, dailyNeeded };
+};
 
 // ===== FIREBASE SETUP & HOOKS =====
 const firebaseConfig = {
@@ -82,8 +142,18 @@ const processProfiles = async (profiles) => {
   const result = {};
   for (const [sid, profile] of Object.entries(profiles || {})) {
     const p = { ...profile };
+    // อัปโหลดรูปโปรไฟล์
     if (isBase64(p.profilePhoto)) {
       p.profilePhoto = await uploadImg(p.profilePhoto, `profiles/${sid}/photo.jpg`);
+    }
+    // อัปโหลดรูปเยี่ยมบ้าน (Array)
+    if (Array.isArray(p.homePhotos)) {
+      p.homePhotos = await Promise.all(p.homePhotos.map(async (photo, idx) => {
+        if (isBase64(photo)) {
+          return await uploadImg(photo, `profiles/${sid}/home_${idx}_${Date.now()}.jpg`);
+        }
+        return photo;
+      }));
     }
     result[sid] = p;
   }
@@ -168,298 +238,545 @@ function useFirestore() {
   return { data, loading, update };
 }
 
-// ===== HOMEROOM PAGE =====
-function HomeroomPage({ data, update, role, currentStudentId, toast }) {
-  const isTeacher = role === 'teacher';
-  const myClass = isTeacher ? data.homeroom : data.students.find(s=>s.id===currentStudentId)?.classId;
-  const students = data.students.filter(s => s.classId === myClass).sort((a,b)=>(a.number||999)-(b.number||999));
+// ===== HOMEROOM COMPONENTS (Detailed Version) =====
 
-  const [activeStudent, setActiveStudent] = useState(isTeacher ? null : currentStudentId);
-  const [tab, setTab] = useState('profile');
-  const [editMode, setEditMode] = useState(false);
-  const [profileForm, setProfileForm] = useState({});
-  const [saveForm, setSaveForm] = useState({ amount: '', note: '', type: 'deposit' });
+function ProfileForm({ student, profile, onSave, onBack, toast }) {
+  const [form, setForm] = useState({ ...emptyProfile(), ...profile });
+  const [sec, setSec] = useState(0);
+  const profileRef = useRef(null);
+  const homeRef = useRef(null);
 
-  const getBalance = (sid) => {
-    const txs = data.savings?.[sid] || [];
-    return txs.reduce((sum, tx) => sum + (tx.type==='deposit'?tx.amount:-tx.amount), 0);
+  const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+
+  const handleProfilePhoto = async e => {
+    const file = e.target.files[0]; if (!file) return;
+    try { set('profilePhoto', await compressImg(file, 600, 0.8)); toast('พร้อมอัปโหลดรูปแล้ว','success'); }
+    catch { toast('เลือกรูปไม่สำเร็จ','error'); }
+    e.target.value = '';
   };
 
-  const handleStudentClick = (sid) => {
-    setActiveStudent(sid);
-    setTab('profile');
-    setEditMode(false);
+  const handleHomePhoto = async e => {
+    const file = e.target.files[0]; if (!file) return;
+    if ((form.homePhotos||[]).length >= 5) return toast('รูปบ้านสูงสุด 5 รูป','error');
+    try {
+      const c = await compressImg(file, 900, 0.75);
+      setForm(p => ({ ...p, homePhotos: [...(p.homePhotos||[]), c] }));
+      toast('เพิ่มรูปรอเซฟแล้ว','success');
+    } catch { toast('เลือกรูปไม่สำเร็จ','error'); }
+    e.target.value = '';
   };
 
-  const handlePhotoUpload = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => setProfileForm(p => ({ ...p, profilePhoto: reader.result }));
-      reader.readAsDataURL(file);
-    }
-  };
+  const Inp = ({ label, k, type='text', placeholder='' }) => (
+    <div style={{marginBottom:10}}>
+      <label style={sLabel}>{label}</label>
+      <input type={type} value={form[k]||''} onChange={e=>set(k,e.target.value)} style={sInp} placeholder={placeholder}/>
+    </div>
+  );
+  const Sel = ({ label, k, options }) => (
+    <div style={{marginBottom:10}}>
+      <label style={sLabel}>{label}</label>
+      <select value={form[k]||''} onChange={e=>set(k,e.target.value)} style={{...sInp,fontFamily:'inherit'}}>
+        <option value="">-- เลือก --</option>
+        {options.map(o=><option key={o} value={o}>{o}</option>)}
+      </select>
+    </div>
+  );
+  const Row2 = ({ children }) => <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>{children}</div>;
+  const Row4 = ({ children }) => <div style={{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:6}}>{children}</div>;
 
-  const saveProfile = () => {
-    update(prev => ({
-      ...prev,
-      profiles: {
-        ...(prev.profiles || {}),
-        [activeStudent]: { ...profileForm }
-      }
-    }));
-    setEditMode(false);
-    toast('บันทึกข้อมูลสำเร็จ', 'success');
-  };
+  const sections = ['ข้อมูลส่วนตัว','ที่อยู่','ครอบครัว','ติดต่อ','รูปภาพ'];
+  const completion = profileCompletion(form);
 
-  const addTransaction = (e) => {
-    e.preventDefault();
-    const amt = parseFloat(saveForm.amount);
-    if (!amt || amt <= 0) return toast('กรุณาระบุจำนวนเงินที่ถูกต้อง', 'error');
-    if (saveForm.type === 'withdraw' && amt > getBalance(activeStudent)) return toast('ยอดเงินไม่พอให้ถอน', 'error');
+  return (
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}}>
+        <button onClick={onBack} style={{...sBtn(false,true),padding:'7px 12px'}}>← กลับ</button>
+        <div style={{textAlign:'center'}}>
+          <div style={{fontWeight:600,fontSize:14,color:C.text}}>{student.name}</div>
+          <div style={{fontSize:11,color:C.muted}}>ข้อมูลครบ {completion}%</div>
+        </div>
+        <button onClick={() => onSave(form)} style={{...sBtn(true,true)}}>💾 บันทึก</button>
+      </div>
 
-    const newTx = {
-      id: uid(),
-      date: todayStr(),
-      timestamp: Date.now(),
-      amount: amt,
-      type: saveForm.type,
-      note: saveForm.note || ''
-    };
+      <div style={{display:'flex',gap:4,overflowX:'auto',paddingBottom:4,marginBottom:12}}>
+        {sections.map((s,i) => <button key={i} onClick={()=>setSec(i)} style={{...sTab(sec===i)}}>{s}</button>)}
+      </div>
 
-    update(prev => {
-      const currentSavings = prev.savings?.[activeStudent] || [];
-      return {
-        ...prev,
-        savings: {
-          ...(prev.savings || {}),
-          [activeStudent]: [newTx, ...currentSavings]
-        }
-      };
-    });
+      {sec===0 && <div style={sCard}>
+        <div style={{fontWeight:700,fontSize:14,marginBottom:12,color:C.text}}>ข้อมูลส่วนตัว</div>
+        <Inp label="เลขบัตรประจำตัวประชาชน (13 หลัก)" k="idCard" placeholder="x-xxxx-xxxxx-xx-x"/>
+        <Row2><Inp label="วัน/เดือน/ปีเกิด" k="birthday" type="date"/><Inp label="อายุ (ปี)" k="age" type="number" placeholder="15"/></Row2>
+        <Row2><Sel label="หมู่เลือด" k="bloodType" options={BLOOD_TYPES}/><Inp label="เชื้อชาติ" k="ethnicity" placeholder="ไทย"/></Row2>
+        <Row2><Inp label="สัญชาติ" k="nationality" placeholder="ไทย"/><Sel label="ศาสนา" k="religion" options={RELIGIONS}/></Row2>
+        <Row2><Inp label="น้ำหนัก (กก.)" k="weight" type="number" placeholder="45"/><Inp label="ส่วนสูง (ซม.)" k="height" type="number" placeholder="160"/></Row2>
+        <Inp label="โรคประจำตัว" k="disease" placeholder="ระบุหากมี หรือ -"/>
+        <button onClick={()=>setSec(1)} style={{...sBtn(true),width:'100%',marginTop:8}}>ถัดไป: ที่อยู่ →</button>
+      </div>}
 
-    setSaveForm({ amount: '', note: '', type: 'deposit' });
-    toast(`ทำรายการ${saveForm.type==='deposit'?'ฝาก':'ถอน'}สำเร็จ`, 'success');
-  };
+      {sec===1 && <div style={sCard}>
+        <div style={{fontWeight:700,fontSize:14,marginBottom:12,color:C.text}}>ที่อยู่อาศัย</div>
+        <Row2><Inp label="บ้านเลขที่" k="houseNo"/><Inp label="หมู่ที่" k="village" type="number"/></Row2>
+        <Inp label="ถนน" k="road"/>
+        <Inp label="ตำบล/แขวง" k="subDistrict"/>
+        <Inp label="อำเภอ/เขต" k="district"/>
+        <Inp label="จังหวัด" k="province"/>
+        <Inp label="รหัสไปรษณีย์" k="postalCode" placeholder="50000"/>
+        <button onClick={()=>setSec(2)} style={{...sBtn(true),width:'100%',marginTop:8}}>ถัดไป: ครอบครัว →</button>
+      </div>}
 
-  const delTransaction = (txId) => {
-    if(!window.confirm('ต้องการลบรายการนี้ใช่หรือไม่?')) return;
-    update(prev => {
-      const currentSavings = prev.savings?.[activeStudent] || [];
-      return {
-        ...prev,
-        savings: {
-          ...prev.savings,
-          [activeStudent]: currentSavings.filter(tx => tx.id !== txId)
-        }
-      };
-    });
-    toast('ลบรายการแล้ว', 'success');
-  };
+      {sec===2 && <div style={sCard}>
+        <div style={{fontWeight:700,fontSize:14,marginBottom:12,color:C.text}}>ข้อมูลครอบครัว</div>
+        <Row2>
+          <Inp label="สมาชิกในครอบครัว (คน)" k="familyCount" type="number"/>
+          <Inp label="จำนวนพี่น้อง (คน)" k="siblingCount" type="number"/>
+        </Row2>
+        <Inp label="เป็นบุตรลำดับที่" k="childOrder" type="number" placeholder="1"/>
+        <div style={{fontSize:12,color:C.muted,marginBottom:6,marginTop:4}}>จำนวนพี่น้อง</div>
+        <Row4>
+          {[['พี่ชาย','brotherOlder'],['น้องชาย','brotherYounger'],['พี่สาว','sisterOlder'],['น้องสาว','sisterYounger']].map(([l,k])=>(
+            <div key={k}>
+              <label style={{...sLabel,fontSize:11}}>{l}</label>
+              <input type="number" min="0" value={form[k]||0} onChange={e=>set(k,parseInt(e.target.value)||0)} style={{...sInp,textAlign:'center',padding:'8px 4px'}}/>
+            </div>
+          ))}
+        </Row4>
 
-  if (isTeacher && !activeStudent) {
-    return (
-      <div style={{ padding: '14px 14px 100px' }}>
-        <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 12, color: C.text }}>🏫 ประจำชั้น {data.homeroom}</div>
-        <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:16}}>
-          <div style={{...sCard, marginBottom:0, textAlign:'center'}}>
-            <div style={{fontSize:13, color:C.muted}}>นักเรียนทั้งหมด</div>
-            <div style={{fontSize:24, fontWeight:700, color:C.text}}>{students.length} <span style={{fontSize:14, fontWeight:400}}>คน</span></div>
-          </div>
-          <div style={{...sCard, marginBottom:0, textAlign:'center'}}>
-            <div style={{fontSize:13, color:C.muted}}>ยอดเงินออมรวม</div>
-            <div style={{fontSize:24, fontWeight:700, color:'#16a34a'}}>
-              {students.reduce((sum, s) => sum + getBalance(s.id), 0).toLocaleString()} <span style={{fontSize:14, fontWeight:400}}>฿</span>
+        <div style={{borderTop:`1px solid ${C.border}`,paddingTop:12,marginTop:12}}>
+          <div style={{fontWeight:600,fontSize:13,color:C.text,marginBottom:8}}>👨 ข้อมูลบิดา</div>
+          <Row2><Inp label="ชื่อ" k="fatherName"/><Inp label="นามสกุล" k="fatherSurname"/></Row2>
+          <Row2><Inp label="อายุ (ปี)" k="fatherAge" type="number"/><Inp label="อาชีพ" k="fatherJob"/></Row2>
+        </div>
+
+        <div style={{borderTop:`1px solid ${C.border}`,paddingTop:12,marginTop:4}}>
+          <div style={{fontWeight:600,fontSize:13,color:C.text,marginBottom:8}}>👩 ข้อมูลมารดา</div>
+          <Row2><Inp label="ชื่อ" k="motherName"/><Inp label="นามสกุล" k="motherSurname"/></Row2>
+          <Row2><Inp label="อายุ (ปี)" k="motherAge" type="number"/><Inp label="อาชีพ" k="motherJob"/></Row2>
+        </div>
+
+        <Sel label="สถานภาพบิดา-มารดา" k="maritalStatus" options={MARITAL}/>
+        <Row2><Inp label="นักเรียนอาศัยอยู่กับ" k="livesWith"/><Inp label="เกี่ยวข้องเป็น" k="relationship" placeholder="เช่น บิดา บิดา ปู่"/></Row2>
+        <button onClick={()=>setSec(3)} style={{...sBtn(true),width:'100%',marginTop:8}}>ถัดไป: ติดต่อ →</button>
+      </div>}
+
+      {sec===3 && <div style={sCard}>
+        <div style={{fontWeight:700,fontSize:14,marginBottom:12,color:C.text}}>ข้อมูลการติดต่อ</div>
+        <div style={{fontWeight:600,fontSize:13,color:C.text,marginBottom:8}}>📱 ผู้ปกครอง</div>
+        <Row2><Inp label="เบอร์โทรศัพท์" k="guardianPhone" type="tel" placeholder="0812345678"/><Inp label="Line ID" k="guardianLine" placeholder="@line"/></Row2>
+        <div style={{borderTop:`1px solid ${C.border}`,paddingTop:12,marginTop:4}}>
+          <div style={{fontWeight:600,fontSize:13,color:C.text,marginBottom:8}}>📱 นักเรียน</div>
+          <Row2><Inp label="เบอร์โทรศัพท์" k="studentPhone" type="tel"/><Inp label="Line ID" k="studentLine"/></Row2>
+        </div>
+        <button onClick={()=>setSec(4)} style={{...sBtn(true),width:'100%',marginTop:8}}>ถัดไป: รูปภาพ →</button>
+      </div>}
+
+      {sec===4 && <div>
+        <div style={sCard}>
+          <div style={{fontWeight:700,fontSize:14,marginBottom:12,color:C.text}}>📷 รูปถ่ายนักเรียน</div>
+          <div style={{display:'flex',gap:14,alignItems:'center'}}>
+            {form.profilePhoto ?
+              <img src={form.profilePhoto} style={{width:90,height:90,borderRadius:45,objectFit:'cover',border:`3px solid ${C.border}`,flexShrink:0}}/> :
+              <div style={{width:90,height:90,borderRadius:45,background:C.light,display:'flex',alignItems:'center',justifyContent:'center',fontSize:40,flexShrink:0}}>👤</div>}
+            <div>
+              <input ref={profileRef} type="file" accept="image/*" onChange={handleProfilePhoto} style={{display:'none'}}/>
+              <button onClick={()=>profileRef.current?.click()} style={{...sBtn(true,true),marginBottom:6,display:'block',width:'100%'}}>📷 เลือกรูป</button>
+              {form.profilePhoto && <button onClick={()=>set('profilePhoto','')} style={{...sBtn(false,true),color:'#dc2626',display:'block',width:'100%'}}>ลบรูป</button>}
+              <div style={{fontSize:11,color:C.muted,marginTop:6}}>แนะนำ: รูปหน้าตรง</div>
             </div>
           </div>
         </div>
 
         <div style={sCard}>
-          <div style={{ fontSize: 14, fontWeight:600, color: C.text, marginBottom: 8 }}>รายชื่อนักเรียน</div>
-          {students.map((s, i) => {
-            const bal = getBalance(s.id);
-            return (
-              <div key={s.id} onClick={() => handleStudentClick(s.id)} style={{ display: 'flex', justifyContent: 'space-between', alignItems:'center', padding: '12px 0', borderBottom: `1px solid ${C.border}`, cursor:'pointer' }}>
-                <div style={{display:'flex', alignItems:'center', gap:10}}>
-                  <div style={{width:40, height:40, borderRadius:20, background:C.light, display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden'}}>
-                     {data.profiles?.[s.id]?.profilePhoto ? <img src={data.profiles[s.id].profilePhoto} alt="profile" style={{width:'100%', height:'100%', objectFit:'cover'}}/> : <span style={{color:C.muted}}>{s.number||i+1}</span>}
-                  </div>
-                  <div>
-                    <div style={{fontWeight: 600, fontSize:15}}>{s.nickname || s.name}</div>
-                    <div style={{color: C.muted, fontSize: 12}}>{s.id}</div>
-                  </div>
-                </div>
-                <div style={{textAlign:'right'}}>
-                  <div style={{fontWeight:700, color: bal>0 ? '#16a34a' : C.muted}}>{bal > 0 ? `฿${bal.toLocaleString()}` : '-'}</div>
-                  <div style={{fontSize:11, color:C.muted}}>ยอดออม</div>
-                </div>
+          <div style={{fontWeight:700,fontSize:14,marginBottom:4,color:C.text}}>🏠 รูปภาพเยี่ยมบ้าน</div>
+          <div style={{fontSize:12,color:C.muted,marginBottom:12}}>ต้องการอย่างน้อย 2 รูป · สูงสุด 5 รูป · ({form.homePhotos?.length||0}/5)</div>
+          {(form.homePhotos||[]).length < 2 && (
+            <div style={{background:'#fffbf0',border:'1px solid #fed7aa',borderRadius:8,padding:'8px 12px',marginBottom:12,fontSize:12,color:'#c2410c'}}>
+              ⚠️ ต้องการรูปบ้านอย่างน้อย 2 รูปสำหรับข้อมูลเยี่ยมบ้าน
+            </div>
+          )}
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
+            {(form.homePhotos||[]).map((ph, i) => (
+              <div key={i} style={{position:'relative'}}>
+                <img src={ph} style={{width:'100%',borderRadius:10,aspectRatio:'4/3',objectFit:'cover',display:'block',border:`1px solid ${C.border}`}}/>
+                <button onClick={()=>setForm(p=>({...p,homePhotos:p.homePhotos.filter((_,j)=>j!==i)}))} style={{position:'absolute',top:5,right:5,background:'rgba(220,38,38,0.9)',color:'white',border:'none',borderRadius:12,width:24,height:24,cursor:'pointer',fontSize:16,fontWeight:700,padding:0,display:'flex',alignItems:'center',justifyContent:'center'}}>×</button>
+                <div style={{position:'absolute',bottom:5,left:5,background:'rgba(0,0,0,0.5)',color:'white',fontSize:10,padding:'2px 6px',borderRadius:8}}>รูปที่ {i+1}</div>
               </div>
-            );
-          })}
-          {students.length === 0 && <div style={{ color: C.muted, textAlign: 'center', padding: 20 }}>ไม่มีนักเรียนในห้องนี้</div>}
+            ))}
+            {(form.homePhotos||[]).length < 5 && (
+              <div onClick={()=>homeRef.current?.click()} style={{borderRadius:10,border:`2px dashed ${C.border}`,background:C.light,display:'flex',alignItems:'center',justifyContent:'center',aspectRatio:'4/3',cursor:'pointer',flexDirection:'column',gap:6}}>
+                <span style={{fontSize:28}}>📷</span>
+                <span style={{fontSize:12,color:C.muted}}>เพิ่มรูปบ้าน</span>
+              </div>
+            )}
+          </div>
+          <input ref={homeRef} type="file" accept="image/*" onChange={handleHomePhoto} style={{display:'none'}}/>
         </div>
+
+        <div style={{display:'flex',gap:8}}>
+          <button onClick={onBack} style={{...sBtn(false),flex:1}}>ยกเลิก</button>
+          <button onClick={()=>onSave(form)} style={{...sBtn(true),flex:1}}>💾 บันทึกทั้งหมด</button>
+        </div>
+      </div>}
+    </div>
+  );
+}
+
+function ProfileView({ student, profile, onEdit, onBack }) {
+  const p = profile || emptyProfile();
+  const pct = profileCompletion(p);
+
+  const Row = ({ label, value }) => (!value || value === '') ? null : (
+    <div style={{display:'flex',gap:8,padding:'7px 0',borderBottom:`1px solid ${C.border}`,fontSize:13}}>
+      <span style={{color:C.muted,minWidth:120,flexShrink:0,fontSize:12}}>{label}</span>
+      <span style={{fontWeight:500}}>{value}</span>
+    </div>
+  );
+
+  const Section = ({ title, children }) => (
+    <div style={sCard}>
+      <div style={{fontWeight:700,fontSize:14,marginBottom:10,color:C.text}}>{title}</div>
+      {children}
+    </div>
+  );
+
+  return (
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',marginBottom:14}}>
+        <button onClick={onBack} style={{...sBtn(false,true),padding:'7px 12px'}}>← กลับ</button>
+        <button onClick={onEdit} style={{...sBtn(true,true)}}>✏️ แก้ไข</button>
+      </div>
+
+      <div style={{...sCard,textAlign:'center',padding:20}}>
+        {p.profilePhoto ?
+          <img src={p.profilePhoto} style={{width:100,height:100,borderRadius:50,objectFit:'cover',margin:'0 auto 12px',display:'block',border:`3px solid ${C.border}`}}/> :
+          <div style={{width:100,height:100,borderRadius:50,background:C.light,margin:'0 auto 12px',display:'flex',alignItems:'center',justifyContent:'center',fontSize:44}}>👤</div>}
+        <div style={{fontWeight:700,fontSize:18,color:C.text}}>{student.name}</div>
+        {student.chineseName && <div style={{color:C.blue,fontSize:15,marginTop:2}}>{student.chineseName}</div>}
+        <div style={{fontSize:12,color:C.muted,marginTop:4}}>{student.id} · {student.classId}</div>
+        <div style={{display:'flex',alignItems:'center',gap:8,justifyContent:'center',marginTop:12}}>
+          <div style={{height:7,borderRadius:4,background:'#e5e7eb',width:120,overflow:'hidden'}}>
+            <div style={{height:'100%',width:`${pct}%`,background:pct>=80?'#16a34a':pct>=50?'#d97706':'#dc2626',borderRadius:4}}/>
+          </div>
+          <span style={{fontSize:13,fontWeight:700,color:pct>=80?'#16a34a':pct>=50?'#d97706':'#dc2626'}}>ครบ {pct}%</span>
+        </div>
+      </div>
+
+      <Section title="ข้อมูลส่วนตัว">
+        <Row label="เลขบัตรประชาชน" value={p.idCard}/>
+        <Row label="วันเกิด" value={p.birthday?fmtDate(p.birthday):null}/>
+        <Row label="อายุ" value={p.age?`${p.age} ปี`:null}/>
+        <Row label="หมู่เลือด" value={p.bloodType}/>
+        <Row label="เชื้อชาติ/สัญชาติ" value={[p.ethnicity,p.nationality].filter(Boolean).join(' / ')}/>
+        <Row label="ศาสนา" value={p.religion}/>
+        <Row label="น้ำหนัก/ส่วนสูง" value={p.weight&&p.height?`${p.weight} กก. / ${p.height} ซม.`:null}/>
+        <Row label="โรคประจำตัว" value={p.disease}/>
+      </Section>
+
+      <Section title="ที่อยู่อาศัย">
+        <Row label="บ้านเลขที่/หมู่" value={[p.houseNo?`เลขที่ ${p.houseNo}`:null, p.village?`หมู่ ${p.village}`:null].filter(Boolean).join(' ')}/>
+        <Row label="ถนน" value={p.road}/>
+        <Row label="ตำบล/แขวง" value={p.subDistrict}/>
+        <Row label="อำเภอ/เขต" value={p.district}/>
+        <Row label="จังหวัด" value={p.province}/>
+        <Row label="รหัสไปรษณีย์" value={p.postalCode}/>
+      </Section>
+
+      <Section title="ข้อมูลครอบครัว">
+        <Row label="สมาชิกในครัว" value={p.familyCount?`${p.familyCount} คน`:null}/>
+        <Row label="เป็นบุตรลำดับที่" value={p.childOrder}/>
+        <Row label="บิดา" value={[p.fatherName,p.fatherSurname].filter(Boolean).join(' ')}/>
+        <Row label="อาชีพบิดา" value={p.fatherJob}/>
+        <Row label="มารดา" value={[p.motherName,p.motherSurname].filter(Boolean).join(' ')}/>
+        <Row label="อาชีพมารดา" value={p.motherJob}/>
+        <Row label="สถานภาพ" value={p.maritalStatus}/>
+        <Row label="อาศัยอยู่กับ" value={p.livesWith}/>
+        <Row label="เกี่ยวข้องเป็น" value={p.relationship}/>
+      </Section>
+
+      <Section title="ข้อมูลการติดต่อ">
+        <Row label="ผู้ปกครอง (โทร)" value={p.guardianPhone}/>
+        <Row label="ผู้ปกครอง (Line)" value={p.guardianLine}/>
+        <Row label="นักเรียน (โทร)" value={p.studentPhone}/>
+        <Row label="นักเรียน (Line)" value={p.studentLine}/>
+      </Section>
+
+      {(p.homePhotos?.length||0) > 0 && (
+        <Section title="🏠 รูปภาพเยี่ยมบ้าน">
+          <div style={{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:8}}>
+            {p.homePhotos.map((ph,i) => (
+              <div key={i} style={{position:'relative'}}>
+                <img src={ph} style={{width:'100%',borderRadius:8,aspectRatio:'4/3',objectFit:'cover',border:`1px solid ${C.border}`}}/>
+                <div style={{position:'absolute',bottom:5,left:5,background:'rgba(0,0,0,0.5)',color:'white',fontSize:10,padding:'2px 6px',borderRadius:8}}>รูปที่ {i+1}</div>
+              </div>
+            ))}
+          </div>
+        </Section>
+      )}
+    </div>
+  );
+}
+
+function ProfileSection({ data, update, role, hStu, myStudentId, toast }) {
+  const [viewId, setViewId] = useState(role === 'student' ? myStudentId : null);
+  const [editing, setEditing] = useState(false); // เริ่มต้นด้วยหน้าต่าง View ให้นักเรียนกดแก้ไขเอง
+
+  const targetId = viewId;
+  const profile = targetId ? (data.profiles?.[targetId] || emptyProfile()) : null;
+  const student = targetId ? data.students.find(s => s.id === targetId) : null;
+
+  const saveProfile = newProfile => {
+    update(prev => ({
+      ...prev,
+      profiles: { ...(prev.profiles||{}), [targetId]: { ...newProfile, updatedAt: new Date().toISOString() } }
+    }));
+    toast('บันทึกประวัติแล้วรอเซฟรูปลงระบบ','success');
+    setEditing(false);
+  };
+
+  if (role === 'teacher' && !viewId) {
+    return (
+      <div>
+        <div style={{fontSize:13,color:C.muted,marginBottom:10}}>
+          ห้อง {data.homeroom} · {hStu.length} คน
+          <span style={{float:'right',color:hStu.filter(s=>profileCompletion(data.profiles?.[s.id])>=80).length===hStu.length&&hStu.length>0?'#16a34a':'#d97706'}}>
+            {hStu.filter(s=>profileCompletion(data.profiles?.[s.id])>=80).length}/{hStu.length} ครบถ้วน
+          </span>
+        </div>
+        {hStu.map(stu => {
+          const pct = profileCompletion(data.profiles?.[stu.id]);
+          const p = data.profiles?.[stu.id];
+          return (
+            <div key={stu.id} onClick={()=>setViewId(stu.id)} style={{...sCard,cursor:'pointer',marginBottom:8,padding:'12px 14px'}}>
+              <div style={{display:'flex',alignItems:'center',gap:12}}>
+                {p?.profilePhoto ?
+                  <img src={p.profilePhoto} style={{width:48,height:48,borderRadius:24,objectFit:'cover',border:`2px solid ${C.border}`,flexShrink:0}}/> :
+                  <div style={{width:48,height:48,borderRadius:24,background:C.light,display:'flex',alignItems:'center',justifyContent:'center',fontSize:22,flexShrink:0}}>👤</div>}
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:600,fontSize:15}}>{stu.number?`${stu.number}. `:''}{stu.name}</div>
+                  <div style={{fontSize:12,color:C.muted}}>{stu.id}{p?.guardianPhone?` · 📞 ${p.guardianPhone}`:''}</div>
+                  <div style={{display:'flex',alignItems:'center',gap:6,marginTop:5}}>
+                    <div style={{height:5,borderRadius:3,background:'#e5e7eb',flex:1,overflow:'hidden'}}>
+                      <div style={{height:'100%',width:`${pct}%`,background:pct>=80?'#16a34a':pct>=50?'#d97706':'#dc2626',borderRadius:3,transition:'width 0.4s'}}/>
+                    </div>
+                    <span style={{fontSize:11,fontWeight:700,color:pct>=80?'#16a34a':pct>=50?'#d97706':'#dc2626',flexShrink:0}}>{pct}%</span>
+                  </div>
+                </div>
+                <span style={{fontSize:18,color:C.muted}}>›</span>
+              </div>
+            </div>
+          );
+        })}
+        {!hStu.length && <div style={{textAlign:'center',color:C.muted,padding:40}}>ยังไม่มีนักเรียนในห้อง {data.homeroom}</div>}
       </div>
     );
   }
 
-  const actStu = data.students.find(s => s.id === activeStudent);
-  if (!actStu) return null;
-  const actProfile = data.profiles?.[activeStudent] || {};
-  const actSavings = data.savings?.[activeStudent] || [];
-  const currentBal = getBalance(activeStudent);
+  if (!targetId || !student) return null;
+
+  if (editing) return <ProfileForm student={student} profile={profile} onSave={saveProfile} onBack={()=>{setEditing(false);if(role==='teacher')setViewId(null);}} toast={toast}/>;
+  return <ProfileView student={student} profile={profile} onEdit={()=>setEditing(true)} onBack={()=>setViewId(role==='teacher'?null:myStudentId)}/>;
+}
+
+function SavingsSection({ data, update, role, hStu, myStudentId, toast }) {
+  const [viewId, setViewId] = useState(role === 'student' ? myStudentId : null);
+  const [goalModal, setGoalModal] = useState(false);
+  const [goalForm, setGoalForm] = useState({ goalName:'', goal:'', goalDate:'' });
+  const [entry, setEntry] = useState({ amount:'', note:'', date:todayStr() });
+
+  const mySav = viewId ? (data.savings?.[viewId] || emptyGoal()) : null;
+  const calc = mySav ? calcSavings(mySav) : null;
+  const stu = viewId ? data.students.find(s=>s.id===viewId) : null;
+
+  const updateSavings = (viewId, fn) => update(prev => {
+    const s = prev.savings?.[viewId] || emptyGoal();
+    return { ...prev, savings: { ...(prev.savings||{}), [viewId]: fn(s) } };
+  });
+
+  const addEntry = () => {
+    const amount = parseFloat(entry.amount);
+    if (!amount || amount <= 0) return toast('กรอกจำนวนเงิน','error');
+    updateSavings(viewId, s => ({ ...s, entries: [...(s.entries||[]), { ...entry, amount, id: Date.now().toString() }] }));
+    setEntry(p => ({ ...p, amount:'', note:'' }));
+    toast(`บันทึก ฿${amount.toLocaleString()} แล้ว`,'success');
+  };
+
+  const removeEntry = id => updateSavings(viewId, s => ({ ...s, entries: (s.entries||[]).filter(e=>e.id!==id) }));
+
+  const saveGoal = () => {
+    updateSavings(viewId, s => ({ ...s, goalName:goalForm.goalName, goal:parseFloat(goalForm.goal)||0, goalDate:goalForm.goalDate }));
+    setGoalModal(false);
+    toast('บันทึกเป้าหมายแล้ว','success');
+  };
+
+  if (role === 'teacher' && !viewId) {
+    const totalAll = hStu.reduce((sum, s) => sum + calcSavings(data.savings?.[s.id]).total, 0);
+    return (
+      <div>
+        <div style={{...sCard,background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',textAlign:'center',marginBottom:14}}>
+          <div style={{fontSize:13,opacity:0.85}}>ยอดออมรวมทั้งห้อง</div>
+          <div style={{fontSize:40,fontWeight:700,margin:'6px 0'}}>฿{totalAll.toLocaleString()}</div>
+          <div style={{fontSize:12,opacity:0.85}}>{hStu.length} คน · ห้อง {data.homeroom}</div>
+        </div>
+        {hStu.map(s => {
+          const sv = data.savings?.[s.id];
+          const c = calcSavings(sv);
+          return (
+            <div key={s.id} onClick={()=>setViewId(s.id)} style={{...sCard,cursor:'pointer',marginBottom:8,padding:'12px 14px'}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:c.goal?6:0}}>
+                <div>
+                  <span style={{fontWeight:600,fontSize:14}}>{s.nickname||s.name}</span>
+                  {sv?.goalName && <span style={{fontSize:11,color:C.muted,marginLeft:6}}>🎯 {sv.goalName}</span>}
+                </div>
+                <div style={{textAlign:'right'}}>
+                  <div style={{fontWeight:700,fontSize:15,color:C.red}}>฿{c.total.toLocaleString()}</div>
+                  {c.goal>0 && <div style={{fontSize:11,color:C.muted}}>{c.pct}%</div>}
+                </div>
+              </div>
+              {c.goal>0 && <div style={{height:5,borderRadius:3,background:'#e5e7eb',overflow:'hidden'}}>
+                <div style={{height:'100%',width:`${c.pct}%`,background:c.pct>=100?'#16a34a':'#d97706',borderRadius:3}}/>
+              </div>}
+            </div>
+          );
+        })}
+      </div>
+    );
+  }
+
+  if (!viewId || !mySav || !calc) return null;
+
+  const previewDailyNeeded = goalForm.goal && goalForm.goalDate
+    ? Math.ceil(parseFloat(goalForm.goal) / Math.max(1, Math.ceil((new Date(goalForm.goalDate+'T00:00:00') - new Date()) / 86400000)))
+    : 0;
 
   return (
-    <div style={{ padding: '14px 14px 100px' }}>
-      {isTeacher && (
-        <button onClick={() => setActiveStudent(null)} style={{background:'transparent', border:'none', color:C.red, fontWeight:600, fontSize:15, marginBottom:16, cursor:'pointer', display:'flex', alignItems:'center', gap:6}}>
-          <span>←</span> กลับไปหน้ารายชื่อ
-        </button>
-      )}
-      <div style={{...sCard, display:'flex', alignItems:'center', gap:14}}>
-        <div style={{position:'relative'}}>
-          <div style={{width:72, height:72, borderRadius:36, background:C.light, border:`2px solid ${C.red}`, display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden'}}>
-             {actProfile.profilePhoto ? <img src={actProfile.profilePhoto} alt="profile" style={{width:'100%', height:'100%', objectFit:'cover'}}/> : <span style={{fontSize:24}}>👤</span>}
-          </div>
-          {editMode && (
-             <label style={{position:'absolute', bottom:-4, right:-4, background:C.red, color:'white', width:28, height:28, borderRadius:14, display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', fontSize:14, border:'2px solid white'}}>
-               📷
-               <input type="file" accept="image/*" onChange={handlePhotoUpload} style={{display:'none'}} />
-             </label>
-          )}
-        </div>
-        <div>
-          <div style={{fontWeight:700, fontSize:18}}>{actStu.name}</div>
-          <div style={{color:C.muted, fontSize:14}}>ชื่อเล่น: {actStu.nickname || '-'} {actStu.chineseName ? `· ${actStu.chineseName}` : ''}</div>
-          <div style={{color:C.muted, fontSize:13}}>รหัส: {actStu.id} · เลขที่ {actStu.number||'-'}</div>
-        </div>
-      </div>
-      <div style={{display:'flex', gap:6, marginBottom:12, background:'white', padding:5, borderRadius:10, border:`1px solid ${C.border}`}}>
-        <button onClick={()=>setTab('profile')} style={{...sTab(tab==='profile'), flex:1}}>📋 ข้อมูลส่วนตัว</button>
-        <button onClick={()=>setTab('savings')} style={{...sTab(tab==='savings'), flex:1}}>💰 การออมเงิน</button>
-      </div>
-
-      {tab === 'profile' && (
-        <div style={{display:'flex', flexDirection:'column', gap:12}}>
-          <div style={sCard}>
-            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12}}>
-              <div style={{fontWeight:600, fontSize:15}}>ข้อมูลประวัตินักเรียน</div>
-              {!editMode ? <button onClick={()=>{setProfileForm({...actProfile}); setEditMode(true);}} style={{...sBtn(false,true), fontSize:12}}>✏️ แก้ไข</button>
-                        : <button onClick={saveProfile} style={{...sBtn(true,true), fontSize:12}}>💾 บันทึก</button>}
-            </div>
-            
-            <div style={{fontWeight:600, fontSize:13, color:C.red, borderBottom:`1px solid ${C.border}`, paddingBottom:4, marginBottom:10}}>👤 ข้อมูลส่วนตัว</div>
-            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:16}}>
-               <div>
-                  <div style={{fontSize:12, color:C.muted, marginBottom:2}}>วัน/เดือน/ปีเกิด</div>
-                  {editMode ? <input type="date" value={profileForm.dob||''} onChange={e=>setProfileForm(p=>({...p, dob:e.target.value}))} style={sInp}/> : <div style={{fontWeight:500}}>{actProfile.dob ? fmtDate(actProfile.dob) : '-'}</div>}
-               </div>
-               <div>
-                  <div style={{fontSize:12, color:C.muted, marginBottom:2}}>กรุ๊ปเลือด</div>
-                  {editMode ? <select value={profileForm.bloodType||''} onChange={e=>setProfileForm(p=>({...p, bloodType:e.target.value}))} style={sInp}><option value="">-</option><option value="A">A</option><option value="B">B</option><option value="AB">AB</option><option value="O">O</option></select> : <div style={{fontWeight:500}}>{actProfile.bloodType || '-'}</div>}
-               </div>
-               <div style={{gridColumn:'1 / -1'}}>
-                  <div style={{fontSize:12, color:C.muted, marginBottom:2}}>เบอร์โทรศัพท์ (นักเรียน)</div>
-                  {editMode ? <input type="tel" value={profileForm.studentPhone||''} onChange={e=>setProfileForm(p=>({...p, studentPhone:e.target.value}))} style={sInp}/> : <div style={{fontWeight:500}}>{actProfile.studentPhone || '-'}</div>}
-               </div>
-            </div>
-
-            <div style={{fontWeight:600, fontSize:13, color:C.red, borderBottom:`1px solid ${C.border}`, paddingBottom:4, marginBottom:10}}>👨‍👩‍👧 ข้อมูลผู้ปกครองและการติดต่อ</div>
-            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:16}}>
-              <div style={{gridColumn:'1 / -1'}}>
-                <div style={{fontSize:12, color:C.muted, marginBottom:2}}>ชื่อ-สกุล ผู้ปกครอง</div>
-                {editMode ? <input value={profileForm.parentName||''} onChange={e=>setProfileForm(p=>({...p, parentName:e.target.value}))} style={sInp}/> : <div style={{fontWeight:500}}>{actProfile.parentName || '-'}</div>}
-              </div>
-              <div>
-                <div style={{fontSize:12, color:C.muted, marginBottom:2}}>ความสัมพันธ์</div>
-                {editMode ? <input value={profileForm.parentRelation||''} onChange={e=>setProfileForm(p=>({...p, parentRelation:e.target.value}))} style={sInp} placeholder="เช่น บิดา, มารดา"/> : <div style={{fontWeight:500}}>{actProfile.parentRelation || '-'}</div>}
-              </div>
-              <div>
-                <div style={{fontSize:12, color:C.muted, marginBottom:2}}>เบอร์โทรศัพท์ (ติดต่อฉุกเฉิน)</div>
-                {editMode ? <input type="tel" value={profileForm.phone||''} onChange={e=>setProfileForm(p=>({...p, phone:e.target.value}))} style={sInp}/> : <div style={{fontWeight:500}}>{actProfile.phone || '-'}</div>}
-              </div>
-              <div style={{gridColumn:'1 / -1'}}>
-                <div style={{fontSize:12, color:C.muted, marginBottom:2}}>ที่อยู่ปัจจุบัน</div>
-                {editMode ? <textarea rows="2" value={profileForm.address||''} onChange={e=>setProfileForm(p=>({...p, address:e.target.value}))} style={sInp}/> : <div style={{fontWeight:500}}>{actProfile.address || '-'}</div>}
-              </div>
-            </div>
-
-            <div style={{fontWeight:600, fontSize:13, color:C.red, borderBottom:`1px solid ${C.border}`, paddingBottom:4, marginBottom:10}}>🏥 สุขภาพและการเดินทาง</div>
-            <div style={{display:'grid', gap:10}}>
-              <div>
-                <div style={{fontSize:12, color:C.muted, marginBottom:2}}>โรคประจำตัว / แพ้ยา / แพ้อาหาร</div>
-                {editMode ? <textarea rows="2" value={profileForm.note||''} onChange={e=>setProfileForm(p=>({...p, note:e.target.value}))} style={sInp} placeholder="หากไม่มีให้ขีด -"/> : <div style={{fontWeight:500, color: actProfile.note ? C.red : C.text}}>{actProfile.note || '-'}</div>}
-              </div>
-              <div>
-                <div style={{fontSize:12, color:C.muted, marginBottom:2}}>วิธีเดินทางมาโรงเรียน</div>
-                {editMode ? <input value={profileForm.commute||''} onChange={e=>setProfileForm(p=>({...p, commute:e.target.value}))} style={sInp} placeholder="เช่น รถรับส่ง, ผู้ปกครองมาส่ง"/> : <div style={{fontWeight:500}}>{actProfile.commute || '-'}</div>}
-              </div>
-            </div>
-
-            {editMode && (
-              <button onClick={()=>setEditMode(false)} style={{...sBtn(false), width:'100%', marginTop:14}}>ยกเลิกการแก้ไข</button>
-            )}
-          </div>
+    <div>
+      {role === 'teacher' && (
+        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+          <button onClick={()=>setViewId(null)} style={{...sBtn(false,true),padding:'7px 12px'}}>← กลับ</button>
+          <div style={{fontWeight:600,fontSize:14,color:C.text}}>{stu?.nickname||stu?.name}</div>
+          <div style={{width:72}}/>
         </div>
       )}
 
-      {tab === 'savings' && (
-        <>
-          <div style={{...sCard, background:`linear-gradient(135deg, #16a34a, #15803d)`, color:'white', textAlign:'center'}}>
-            <div style={{fontSize:14, opacity:0.9}}>ยอดเงินออมปัจจุบัน</div>
-            <div style={{fontSize:42, fontWeight:700, margin:'4px 0'}}>{currentBal.toLocaleString()} <span style={{fontSize:20, fontWeight:400}}>฿</span></div>
+      <div style={{...sCard,background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',marginBottom:14}}>
+        {mySav.goalName && <div style={{fontSize:13,opacity:0.85,marginBottom:4}}>🎯 {mySav.goalName}</div>}
+        <div style={{fontSize:46,fontWeight:700,lineHeight:1}}>฿{calc.total.toLocaleString()}</div>
+        <div style={{fontSize:13,opacity:0.85,marginTop:4,marginBottom:14}}>ออมมาแล้วทั้งหมด</div>
+
+        {calc.goal > 0 && <>
+          <div style={{height:7,borderRadius:4,background:'rgba(255,255,255,0.25)',marginBottom:8,overflow:'hidden'}}>
+            <div style={{height:'100%',width:`${Math.min(100,calc.pct)}%`,background:'white',borderRadius:4,transition:'width 0.6s'}}/>
           </div>
-          {isTeacher && (
-            <form onSubmit={addTransaction} style={{...sCard, display:'grid', gap:10}}>
-              <div style={{fontWeight:600, fontSize:14}}>บันทึกรายการ ฝาก-ถอน</div>
-              <div style={{display:'flex', gap:6}}>
-                <label style={{flex:1, display:'flex', alignItems:'center', gap:6, background:saveForm.type==='deposit'?'#dcfce7':'white', border:`1.5px solid ${saveForm.type==='deposit'?'#16a34a':C.border}`, padding:'10px', borderRadius:8, cursor:'pointer'}}>
-                  <input type="radio" checked={saveForm.type==='deposit'} onChange={()=>setSaveForm(p=>({...p, type:'deposit'}))} style={{accentColor:'#16a34a'}}/> 
-                  <span style={{fontWeight:600, color:saveForm.type==='deposit'?'#16a34a':C.text}}>📥 ฝากเงิน</span>
-                </label>
-                <label style={{flex:1, display:'flex', alignItems:'center', gap:6, background:saveForm.type==='withdraw'?'#fee2e2':'white', border:`1.5px solid ${saveForm.type==='withdraw'?'#dc2626':C.border}`, padding:'10px', borderRadius:8, cursor:'pointer'}}>
-                  <input type="radio" checked={saveForm.type==='withdraw'} onChange={()=>setSaveForm(p=>({...p, type:'withdraw'}))} style={{accentColor:'#dc2626'}}/> 
-                  <span style={{fontWeight:600, color:saveForm.type==='withdraw'?'#dc2626':C.text}}>📤 ถอนเงิน</span>
-                </label>
+          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:6,marginBottom:10}}>
+            {[['เป้าหมาย',`฿${calc.goal.toLocaleString()}`],['คงเหลือ',`฿${calc.remaining.toLocaleString()}`],['ความคืบหน้า',`${calc.pct}%`]].map(([l,v])=>(
+              <div key={l} style={{background:'rgba(255,255,255,0.15)',borderRadius:8,padding:'8px 6px',textAlign:'center'}}>
+                <div style={{fontSize:14,fontWeight:700}}>{v}</div>
+                <div style={{fontSize:10,opacity:0.85,marginTop:2}}>{l}</div>
               </div>
-              <div style={{display:'flex', gap:8}}>
-                <div style={{flex:1}}>
-                  <div style={{fontSize:12, color:C.muted, marginBottom:4}}>จำนวนเงิน (บาท)*</div>
-                  <input type="number" min="1" step="1" required value={saveForm.amount} onChange={e=>setSaveForm(p=>({...p, amount:e.target.value}))} style={sInp} placeholder="0.00"/>
-                </div>
-                <div style={{flex:2}}>
-                  <div style={{fontSize:12, color:C.muted, marginBottom:4}}>หมายเหตุ</div>
-                  <input value={saveForm.note} onChange={e=>setSaveForm(p=>({...p, note:e.target.value}))} style={sInp} placeholder="เช่น ค่าขนม, ซื้ออุปกรณ์"/>
-                </div>
-              </div>
-              <button type="submit" style={{...sBtn(true), background: saveForm.type==='deposit'?'#16a34a':'#dc2626', marginTop:4}}>
-                บันทึก{saveForm.type==='deposit'?'การฝาก':'การถอน'}เงิน
-              </button>
-            </form>
+            ))}
+          </div>
+          {calc.daysLeft > 0 && (
+            <div style={{background:'rgba(255,255,255,0.15)',borderRadius:8,padding:'10px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+              <span style={{fontSize:13}}>เหลืออีก {calc.daysLeft} วัน ต้องออม</span>
+              <span style={{fontWeight:700,fontSize:17}}>฿{calc.dailyNeeded.toLocaleString()} /วัน</span>
+            </div>
           )}
-          <div style={sCard}>
-            <div style={{fontWeight:600, fontSize:15, marginBottom:12}}>ประวัติทำรายการ ({actSavings.length})</div>
-            {actSavings.length === 0 ? <div style={{textAlign:'center', color:C.muted, padding:10}}>ยังไม่มีประวัติการทำรายการ</div> : (
-              <div style={{display:'flex', flexDirection:'column', gap:8}}>
-                {actSavings.map(tx => (
-                  <div key={tx.id} style={{display:'flex', justifyContent:'space-between', alignItems:'center', paddingBottom:8, borderBottom:`1px dashed ${C.border}`}}>
-                    <div>
-                      <div style={{fontWeight:600, color: tx.type==='deposit' ? '#16a34a' : '#dc2626', fontSize:14}}>
-                        {tx.type==='deposit' ? '📥 ฝากเข้า' : '📤 ถอนออก'}
-                      </div>
-                      <div style={{fontSize:12, color:C.muted}}>{fmtDate(tx.date)} {tx.note && `· ${tx.note}`}</div>
-                    </div>
-                    <div style={{display:'flex', alignItems:'center', gap:10}}>
-                      <div style={{fontWeight:700, fontSize:15, color: tx.type==='deposit' ? '#16a34a' : '#dc2626'}}>
-                        {tx.type==='deposit' ? '+' : '-'}{tx.amount.toLocaleString()}
-                      </div>
-                      {isTeacher && <button onClick={()=>delTransaction(tx.id)} style={{background:'none', border:'none', color:'#dc2626', cursor:'pointer', padding:'2px 4px'}}>✖</button>}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+          {calc.pct >= 100 && <div style={{background:'rgba(22,163,74,0.8)',borderRadius:8,padding:'10px',textAlign:'center',fontSize:15,fontWeight:700}}>🎉 ถึงเป้าหมายแล้ว!</div>}
+        </>}
+
+        {role === 'teacher' && (
+          <button onClick={()=>{setGoalForm({goalName:mySav.goalName||'',goal:mySav.goal||'',goalDate:mySav.goalDate||''});setGoalModal(true);}} style={{marginTop:12,width:'100%',padding:'9px',background:'rgba(255,255,255,0.2)',border:'1px solid rgba(255,255,255,0.4)',color:'white',borderRadius:8,cursor:'pointer',fontFamily:'inherit',fontWeight:600,fontSize:13}}>
+            🎯 {mySav.goal ? 'แก้ไขเป้าหมาย' : 'ตั้งเป้าหมายการออม'}
+          </button>
+        )}
+      </div>
+
+      {role === 'teacher' && (
+        <div style={sCard}>
+          <div style={{fontWeight:700,fontSize:14,marginBottom:12,color:C.text}}>💰 บันทึกการออม</div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
+            <div>
+              <label style={sLabel}>จำนวนเงิน (บาท)</label>
+              <input type="number" value={entry.amount} onChange={e=>setEntry(p=>({...p,amount:e.target.value}))} onKeyDown={e=>e.key==='Enter'&&addEntry()} style={{...sInp,fontSize:18,fontWeight:700,textAlign:'center'}} placeholder="50"/>
+            </div>
+            <div>
+              <label style={sLabel}>วันที่</label>
+              <input type="date" value={entry.date} onChange={e=>setEntry(p=>({...p,date:e.target.value}))} style={sInp}/>
+            </div>
           </div>
-        </>
+          <input value={entry.note} onChange={e=>setEntry(p=>({...p,note:e.target.value}))} style={{...sInp,marginBottom:10}} placeholder="หมายเหตุ เช่น ถอนหรือฝากเพิ่ม"/>
+          <button onClick={addEntry} style={{...sBtn(true),width:'100%',padding:12}}>+ บันทึกการออม</button>
+        </div>
+      )}
+
+      <div style={{fontWeight:600,fontSize:14,marginBottom:8,color:C.text,display:'flex',justifyContent:'space-between'}}>
+        <span>ประวัติการทำรายการ</span>
+        <span style={{fontSize:12,color:C.muted,fontWeight:400}}>{(mySav.entries||[]).length} รายการ</span>
+      </div>
+      {(mySav.entries||[]).length === 0 && <div style={{textAlign:'center',color:C.muted,padding:40}}>ยังไม่มีรายการทำธุรกรรม</div>}
+      {[...(mySav.entries||[])].sort((a,b)=>(b.date||'').localeCompare(a.date||'')).map((e,i) => {
+        const amt = parseFloat(e.amount);
+        const isDep = amt > 0;
+        return(
+        <div key={e.id||i} style={{...sCard,marginBottom:6,padding:'10px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
+          <div>
+            <div style={{fontSize:16,fontWeight:700,color:isDep?'#16a34a':'#dc2626'}}>{isDep?'+':''}฿{amt.toLocaleString()}</div>
+            <div style={{fontSize:12,color:C.muted}}>{fmtDate(e.date)}{e.note?` · ${e.note}`:''}</div>
+          </div>
+          {role === 'teacher' && <button onClick={()=>removeEntry(e.id||i)} style={{background:'none',border:'none',color:'#9ca3af',cursor:'pointer',fontSize:20,padding:'4px 8px',lineHeight:1}}>×</button>}
+        </div>
+      )})}
+
+      {role === 'teacher' && (
+        <Sheet open={goalModal} title="🎯 ตั้งเป้าหมายการออม" onClose={()=>setGoalModal(false)}>
+          <div style={{fontSize:12,color:C.muted,marginBottom:4}}>ชื่อเป้าหมาย</div>
+          <input value={goalForm.goalName} onChange={e=>setGoalForm(p=>({...p,goalName:e.target.value}))} style={{...sInp,marginBottom:10}} placeholder="เช่น ซื้อโทรศัพท์ ทริปปิดเทอม"/>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
+            <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>จำนวนเงิน (บาท)</div><input type="number" value={goalForm.goal} onChange={e=>setGoalForm(p=>({...p,goal:e.target.value}))} style={{...sInp,textAlign:'center',fontWeight:700}} placeholder="5000"/></div>
+            <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>วันที่เป้าหมาย</div><input type="date" value={goalForm.goalDate} onChange={e=>setGoalForm(p=>({...p,goalDate:e.target.value}))} style={sInp}/></div>
+          </div>
+          {goalForm.goal && goalForm.goalDate && previewDailyNeeded > 0 && (
+            <div style={{background:'#fffbf0',border:'1px solid #fed7aa',borderRadius:10,padding:'12px 14px',marginBottom:14}}>
+              <div style={{fontSize:12,color:'#92400e',marginBottom:4}}>💡 ต้องออมเพื่อถึงเป้าหมาย</div>
+              <div style={{fontSize:20,fontWeight:700,color:C.red}}>฿{previewDailyNeeded.toLocaleString()} ต่อวัน</div>
+              <div style={{fontSize:12,color:'#92400e',marginTop:2}}>หรือ ฿{Math.ceil(previewDailyNeeded*7).toLocaleString()} ต่อสัปดาห์</div>
+            </div>
+          )}
+          <div style={{display:'flex',gap:8}}>
+            <button onClick={()=>setGoalModal(false)} style={{...sBtn(false),flex:1}}>ยกเลิก</button>
+            <button onClick={saveGoal} style={{...sBtn(true),flex:1}}>💾 บันทึก</button>
+          </div>
+        </Sheet>
+      )}
+    </div>
+  );
+}
+
+function HomeroomPage({ data, update, role, currentStudentId, toast }) {
+  const [sub, setSub] = useState('profile');
+
+  const hStu = (data.students||[])
+    .filter(s => s.classId === data.homeroom)
+    .sort((a,b) => (a.number||999)-(b.number||999));
+
+  return (
+    <div style={{padding:'14px 14px 100px'}}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}>
+        <div style={{fontWeight:700,fontSize:18,color:C.text}}>🏫 ประจำชั้น</div>
+        <div style={{fontSize:12,color:C.muted}}>{data.homeroom} · {hStu.length} คน</div>
+      </div>
+
+      <div style={{display:'flex',gap:6,marginBottom:14,background:'white',padding:5,borderRadius:10,border:`1px solid ${C.border}`}}>
+        <button onClick={()=>setSub('profile')} style={{...sTab(sub==='profile'),flex:1}}>📋 ประวัติ</button>
+        <button onClick={()=>setSub('savings')} style={{...sTab(sub==='savings'),flex:1}}>💰 การออมเงิน</button>
+      </div>
+
+      {sub==='profile' && (
+        <ProfileSection data={data} update={update} role={role} hStu={hStu}
+          myStudentId={currentStudentId} toast={toast}/>
+      )}
+      {sub==='savings' && (
+        <SavingsSection data={data} update={update} role={role} hStu={hStu}
+          myStudentId={currentStudentId} toast={toast}/>
       )}
     </div>
   );
@@ -637,17 +954,7 @@ function StatsPage({data}){const[sub,setSub]=useState('morning');const[cls,setCl
 function IOPage({data,update,toast}){
   const fileRef=useRef(null);const[importPreview,setImportPreview]=useState(null);
   const[exportModal,setExportModal]=useState(false);
-  
-  // === เพิ่มสถานะสำหรับตัวเลือกใหม่ ===
-  const[exportSections,setExportSections]=useState({
-    students:true,
-    homeroomProfiles:false, 
-    savingsSummary:false,
-    scores:true,
-    morningAtt:true,
-    classAtt:true
-  });
-  
+  const[exportSections,setExportSections]=useState({students:true,homeroomProfiles:false,savingsSummary:false,scores:true,morningAtt:true,classAtt:true});
   const[exportSubjs,setExportSubjs]=useState(()=>Object.fromEntries(data.subjects.map(s=>[s.id,true])));
 
   const toggleSection=k=>setExportSections(p=>({...p,[k]:!p[k]}));
@@ -659,82 +966,84 @@ function IOPage({data,update,toast}){
       const wb=XLSX.utils.book_new();
       const safeSheetName = (name) => name.replace(/[\\/?*[\]]/g, '-').substring(0, 31);
       
-      // 1. นักเรียนทั้งหมด
       if(exportSections.students){
         const rows=data.students.sort((a,b)=>(a.number||999)-(b.number||999)).map(s=>({'เลขที่':s.number||'','รหัส':s.id,'ชื่อ-สกุล':s.name,'ชื่อเล่น':s.nickname||'','ชื่อภาษาจีน':s.chineseName||'','ห้อง':s.classId,'PIN':s.pin}));
         XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows.length?rows:[{}]),safeSheetName('นักเรียนทั้งหมด'));
       }
       
-      // 2. ข้อมูลส่วนตัวประจำชั้น
       if(exportSections.homeroomProfiles){
         const hrStudents = data.students.filter(s => s.classId === data.homeroom).sort((a,b)=>(a.number||999)-(b.number||999));
         const rows = hrStudents.map(s => {
-            const p = data.profiles?.[s.id] || {};
+            const p = data.profiles?.[s.id] || emptyProfile();
             return {
                 'เลขที่': s.number || '',
                 'รหัส': s.id,
                 'ชื่อ-สกุล': s.name,
-                'วันเกิด': p.dob || '',
+                'เลขบัตรประชาชน': p.idCard || '',
+                'วันเกิด': p.birthday || '',
+                'อายุ (ปี)': p.age || '',
                 'กรุ๊ปเลือด': p.bloodType || '',
-                'เบอร์นักเรียน': p.studentPhone || '',
-                'ชื่อผู้ปกครอง': p.parentName || '',
-                'ความสัมพันธ์': p.parentRelation || '',
-                'เบอร์ผู้ปกครอง': p.phone || '',
-                'ที่อยู่': p.address || '',
-                'การเดินทาง': p.commute || '',
-                'โรคประจำตัว/แพ้อาหาร': p.note || ''
+                'ศาสนา': p.religion || '',
+                'น้ำหนัก': p.weight || '',
+                'ส่วนสูง': p.height || '',
+                'โรคประจำตัว': p.disease || '',
+                'ที่อยู่เลขที่': p.houseNo || '',
+                'หมู่ที่': p.village || '',
+                'ถนน': p.road || '',
+                'ตำบล': p.subDistrict || '',
+                'อำเภอ': p.district || '',
+                'จังหวัด': p.province || '',
+                'รหัสไปรษณีย์': p.postalCode || '',
+                'ชื่อบิดา': [p.fatherName, p.fatherSurname].filter(Boolean).join(' '),
+                'ชื่อมารดา': [p.motherName, p.motherSurname].filter(Boolean).join(' '),
+                'สถานภาพบิดามารดา': p.maritalStatus || '',
+                'อาศัยอยู่กับ': p.livesWith || '',
+                'เบอร์โทรผู้ปกครอง': p.guardianPhone || '',
+                'เบอร์โทรนักเรียน': p.studentPhone || ''
             };
         });
         XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{}]), safeSheetName(`ข้อมูลส่วนตัว ${data.homeroom}`));
       }
       
-      // 3. สรุปการออมเงินประจำชั้น
       if(exportSections.savingsSummary){
         const hrStudents = data.students.filter(s => s.classId === data.homeroom).sort((a,b)=>(a.number||999)-(b.number||999));
         const rows = hrStudents.map(s => {
-            const txs = data.savings?.[s.id] || [];
-            const deposit = txs.filter(t => t.type === 'deposit').reduce((sum, t) => sum + t.amount, 0);
-            const withdraw = txs.filter(t => t.type === 'withdraw').reduce((sum, t) => sum + t.amount, 0);
-            const balance = deposit - withdraw;
+            const sv = data.savings?.[s.id];
+            const c = calcSavings(sv);
             return {
                 'เลขที่': s.number || '',
                 'รหัส': s.id,
                 'ชื่อ-สกุล': s.name,
-                'ยอดฝากรวม (บาท)': deposit,
-                'ยอดถอนรวม (บาท)': withdraw,
-                'ยอดคงเหลือ (บาท)': balance
+                'เป้าหมายการออม (บาท)': c.goal,
+                'ออมแล้ว (บาท)': c.total,
+                'ความคืบหน้า (%)': c.pct
             };
         });
         
-        // เพิ่มแถวสรุปยอดรวมด้านล่างสุด
         if (rows.length > 0) {
-             const totalDep = rows.reduce((s, r) => s + r['ยอดฝากรวม (บาท)'], 0);
-             const totalWd = rows.reduce((s, r) => s + r['ยอดถอนรวม (บาท)'], 0);
-             const totalBal = rows.reduce((s, r) => s + r['ยอดคงเหลือ (บาท)'], 0);
+             const totalGoal = rows.reduce((s, r) => s + r['เป้าหมายการออม (บาท)'], 0);
+             const totalSav = rows.reduce((s, r) => s + r['ออมแล้ว (บาท)'], 0);
              rows.push({
                  'เลขที่': 'รวมทั้งหมด',
                  'รหัส': '',
                  'ชื่อ-สกุล': '',
-                 'ยอดฝากรวม (บาท)': totalDep,
-                 'ยอดถอนรวม (บาท)': totalWd,
-                 'ยอดคงเหลือ (บาท)': totalBal
+                 'เป้าหมายการออม (บาท)': totalGoal,
+                 'ออมแล้ว (บาท)': totalSav,
+                 'ความคืบหน้า (%)': totalGoal > 0 ? Math.round((totalSav/totalGoal)*100) : 0
              });
         }
         XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{}]), safeSheetName(`สรุปออมเงิน ${data.homeroom}`));
       }
       
-      // 4. เข้าแถว
       if(exportSections.morningAtt){
         const rows=data.attendance.filter(a=>a.type==='morning').sort((a,b)=>a.date.localeCompare(b.date)).map(a=>{const s=data.students.find(x=>x.id===a.studentId);return{'วันที่':a.date,'รหัส':a.studentId,'เลขที่':s?.number||'','ชื่อ':s?.name||'','ห้อง':s?.classId||'','สถานะ':STATUS[a.status]?.label||a.status,'หมายเหตุ':a.note||''};});
         XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows.length?rows:[{}]),safeSheetName('เข้าแถว'));
       }
       
-      // 5. คาบเรียน
       if(exportSections.classAtt){
         data.subjects.filter(s=>exportSubjs[s.id]).forEach(subj=>{const rows=data.attendance.filter(a=>a.type==='class'&&a.subjectId===subj.id).sort((a,b)=>a.date.localeCompare(b.date)).map(a=>{const s=data.students.find(x=>x.id===a.studentId);return{'วันที่':a.date,'คาบ':a.period||'','รหัส':a.studentId,'เลขที่':s?.number||'','ชื่อ':s?.name||'','ห้อง':s?.classId||'','สถานะ':STATUS[a.status]?.label||a.status,'คะแนน':a.customScore??''};});const shName=safeSheetName(`คาบ ${subj.code||subj.name}`);XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows.length?rows:[{}]),shName);});
       }
       
-      // 6. คะแนน
       if(exportSections.scores){
         data.subjects.filter(s=>exportSubjs[s.id]).forEach(subj=>{const sCats=data.categories.filter(c=>c.subjectId===subj.id);const rows=data.students.sort((a,b)=>(a.number||999)-(b.number||999)).map(s=>{const row={'เลขที่':s.number||'','รหัส':s.id,'ชื่อ':s.name,'ห้อง':s.classId};sCats.forEach(c=>{const k=`${c.name}(${getCatMax(c)})`;row[k]=getCatScore(s.id,c,data.scores,data.term,data.year)||'';});const mx=sCats.reduce((t,c)=>t+getCatMax(c),0);const tot=sCats.reduce((t,c)=>t+getCatScore(s.id,c,data.scores,data.term,data.year),0);const has=sCats.some(c=>hasCatScore(s.id,c,data.scores,data.term,data.year));row['รวม']=has?tot:'';row['เกรด']=has?(getSubjectGrade(s.id,subj,data.categories,data.scores,data.term,data.year,data.attendance,data.conduct)?.label||''):'' ;return row;});const shName=safeSheetName(`คะแนน ${subj.code||subj.name}`);XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),[shName][0]);});
       }
@@ -749,7 +1058,6 @@ function IOPage({data,update,toast}){
   const handleFile=async e=>{const f=e.target.files[0];if(!f)return;try{const XLSX=await import('xlsx');const wb=XLSX.read(await f.arrayBuffer());const ws=wb.Sheets[wb.SheetNames.find(n=>n.includes('นักเรียน'))||wb.SheetNames[0]];const rows=XLSX.utils.sheet_to_json(ws).map(r=>({id:String(r['รหัสนักเรียน']||r['รหัส']||'').trim(),name:String(r['ชื่อ-สกุล']||r['ชื่อ']||'').trim(),nickname:String(r['ชื่อเล่น']||'').trim(),chineseName:String(r['ชื่อภาษาจีน']||'').trim(),number:parseInt(r['เลขที่'])||null,classId:String(r['ห้อง']||'').trim(),pin:String(r['PIN']||'').trim()||randomPin()})).filter(s=>s.id&&s.name&&s.classId);if(!rows.length)return toast('ไม่พบข้อมูล ตรวจสอบหัวคอลัมน์','error');setImportPreview(rows);}catch(ex){toast('อ่านไฟล์ไม่ได้: '+ex.message,'error');}e.target.value='';};
   const confirmImport=mode=>{if(!importPreview)return;update(prev=>{const ex=new Map(prev.students.map(s=>[s.id,s]));const nc=new Set(prev.classes);importPreview.forEach(s=>{const pin=/^\d{4}$/.test(s.pin)?s.pin:randomPin();if(ex.has(s.id)){if(mode==='replace')ex.set(s.id,{...ex.get(s.id),...s,pin});}else ex.set(s.id,{...s,pin});if(s.classId&&!nc.has(s.classId))nc.add(s.classId);});return{...prev,students:Array.from(ex.values()),classes:sortClasses(Array.from(nc))};});toast(`นำเข้า ${importPreview.length} รายการ ✓`,'success');setImportPreview(null);};
 
-  // === คำนวณจำนวนเพื่อแสดงใน Modal ===
   const hrCount = data.students.filter(s => s.classId === data.homeroom).length;
   const exportCounts={
     students:data.students.length,
