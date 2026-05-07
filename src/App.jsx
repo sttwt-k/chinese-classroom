@@ -85,11 +85,6 @@ const processProfiles = async (profiles) => {
     if (isBase64(p.profilePhoto)) {
       p.profilePhoto = await uploadImg(p.profilePhoto, `profiles/${sid}/photo.jpg`);
     }
-    if (Array.isArray(p.homePhotos)) {
-      p.homePhotos = await Promise.all(
-        p.homePhotos.map((ph, i) => isBase64(ph) ? uploadImg(ph, `profiles/${sid}/home_${i}.jpg`) : Promise.resolve(ph))
-      );
-    }
     result[sid] = p;
   }
   return result;
@@ -124,7 +119,10 @@ function useFirestore() {
     const unsubscribe = onSnapshot(docRef, 
       (docSnap) => {
         if (docSnap.exists()) {
-          setData(docSnap.data());
+          const fetchedData = docSnap.data();
+          if(!fetchedData.profiles) fetchedData.profiles = {};
+          if(!fetchedData.savings) fetchedData.savings = {};
+          setData(fetchedData);
         } else {
           const defaultData = initData();
           setDoc(docRef, defaultData).catch(err => console.error("Create initial data error:", err));
@@ -173,21 +171,265 @@ function useFirestore() {
 // ===== HOMEROOM PAGE =====
 function HomeroomPage({ data, update, role, currentStudentId, toast }) {
   const isTeacher = role === 'teacher';
-  const homeroomStudents = data.students.filter(s => s.classId === data.homeroom).sort((a,b)=>(a.number||999)-(b.number||999));
+  const myClass = isTeacher ? data.homeroom : data.students.find(s=>s.id===currentStudentId)?.classId;
+  const students = data.students.filter(s => s.classId === myClass).sort((a,b)=>(a.number||999)-(b.number||999));
+
+  const [activeStudent, setActiveStudent] = useState(isTeacher ? null : currentStudentId);
+  const [tab, setTab] = useState('profile');
+  const [editMode, setEditMode] = useState(false);
+  const [profileForm, setProfileForm] = useState({});
+  const [saveForm, setSaveForm] = useState({ amount: '', note: '', type: 'deposit' });
+
+  const getBalance = (sid) => {
+    const txs = data.savings?.[sid] || [];
+    return txs.reduce((sum, tx) => sum + (tx.type==='deposit'?tx.amount:-tx.amount), 0);
+  };
+
+  const handleStudentClick = (sid) => {
+    setActiveStudent(sid);
+    setTab('profile');
+    setEditMode(false);
+  };
+
+  const handlePhotoUpload = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => setProfileForm(p => ({ ...p, profilePhoto: reader.result }));
+      reader.readAsDataURL(file);
+    }
+  };
+
+  const saveProfile = () => {
+    update(prev => ({
+      ...prev,
+      profiles: {
+        ...(prev.profiles || {}),
+        [activeStudent]: { ...profileForm }
+      }
+    }));
+    setEditMode(false);
+    toast('บันทึกข้อมูลสำเร็จ', 'success');
+  };
+
+  const addTransaction = (e) => {
+    e.preventDefault();
+    const amt = parseFloat(saveForm.amount);
+    if (!amt || amt <= 0) return toast('กรุณาระบุจำนวนเงินที่ถูกต้อง', 'error');
+    if (saveForm.type === 'withdraw' && amt > getBalance(activeStudent)) return toast('ยอดเงินไม่พอให้ถอน', 'error');
+
+    const newTx = {
+      id: uid(),
+      date: todayStr(),
+      timestamp: Date.now(),
+      amount: amt,
+      type: saveForm.type,
+      note: saveForm.note || ''
+    };
+
+    update(prev => {
+      const currentSavings = prev.savings?.[activeStudent] || [];
+      return {
+        ...prev,
+        savings: {
+          ...(prev.savings || {}),
+          [activeStudent]: [newTx, ...currentSavings]
+        }
+      };
+    });
+
+    setSaveForm({ amount: '', note: '', type: 'deposit' });
+    toast(`ทำรายการ${saveForm.type==='deposit'?'ฝาก':'ถอน'}สำเร็จ`, 'success');
+  };
+
+  const delTransaction = (txId) => {
+    if(!window.confirm('ต้องการลบรายการนี้ใช่หรือไม่?')) return;
+    update(prev => {
+      const currentSavings = prev.savings?.[activeStudent] || [];
+      return {
+        ...prev,
+        savings: {
+          ...prev.savings,
+          [activeStudent]: currentSavings.filter(tx => tx.id !== txId)
+        }
+      };
+    });
+    toast('ลบรายการแล้ว', 'success');
+  };
+
+  if (isTeacher && !activeStudent) {
+    return (
+      <div style={{ padding: '14px 14px 100px' }}>
+        <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 12, color: C.text }}>🏫 ประจำชั้น {data.homeroom}</div>
+        <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:8, marginBottom:16}}>
+          <div style={{...sCard, marginBottom:0, textAlign:'center'}}>
+            <div style={{fontSize:13, color:C.muted}}>นักเรียนทั้งหมด</div>
+            <div style={{fontSize:24, fontWeight:700, color:C.text}}>{students.length} <span style={{fontSize:14, fontWeight:400}}>คน</span></div>
+          </div>
+          <div style={{...sCard, marginBottom:0, textAlign:'center'}}>
+            <div style={{fontSize:13, color:C.muted}}>ยอดเงินออมรวม</div>
+            <div style={{fontSize:24, fontWeight:700, color:'#16a34a'}}>
+              {students.reduce((sum, s) => sum + getBalance(s.id), 0).toLocaleString()} <span style={{fontSize:14, fontWeight:400}}>฿</span>
+            </div>
+          </div>
+        </div>
+
+        <div style={sCard}>
+          <div style={{ fontSize: 14, fontWeight:600, color: C.text, marginBottom: 8 }}>รายชื่อนักเรียน</div>
+          {students.map((s, i) => {
+            const bal = getBalance(s.id);
+            return (
+              <div key={s.id} onClick={() => handleStudentClick(s.id)} style={{ display: 'flex', justifyContent: 'space-between', alignItems:'center', padding: '12px 0', borderBottom: `1px solid ${C.border}`, cursor:'pointer' }}>
+                <div style={{display:'flex', alignItems:'center', gap:10}}>
+                  <div style={{width:40, height:40, borderRadius:20, background:C.light, display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden'}}>
+                     {data.profiles?.[s.id]?.profilePhoto ? <img src={data.profiles[s.id].profilePhoto} alt="profile" style={{width:'100%', height:'100%', objectFit:'cover'}}/> : <span style={{color:C.muted}}>{s.number||i+1}</span>}
+                  </div>
+                  <div>
+                    <div style={{fontWeight: 600, fontSize:15}}>{s.nickname || s.name}</div>
+                    <div style={{color: C.muted, fontSize: 12}}>{s.id}</div>
+                  </div>
+                </div>
+                <div style={{textAlign:'right'}}>
+                  <div style={{fontWeight:700, color: bal>0 ? '#16a34a' : C.muted}}>{bal > 0 ? `฿${bal.toLocaleString()}` : '-'}</div>
+                  <div style={{fontSize:11, color:C.muted}}>ยอดออม</div>
+                </div>
+              </div>
+            );
+          })}
+          {students.length === 0 && <div style={{ color: C.muted, textAlign: 'center', padding: 20 }}>ไม่มีนักเรียนในห้องนี้</div>}
+        </div>
+      </div>
+    );
+  }
+
+  const actStu = data.students.find(s => s.id === activeStudent);
+  if (!actStu) return null;
+  const actProfile = data.profiles?.[activeStudent] || {};
+  const actSavings = data.savings?.[activeStudent] || [];
+  const currentBal = getBalance(activeStudent);
 
   return (
     <div style={{ padding: '14px 14px 100px' }}>
-      <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 12, color: C.text }}>🏫 ประจำชั้น {data.homeroom}</div>
-      <div style={sCard}>
-        <div style={{ fontSize: 14, color: C.muted, marginBottom: 8 }}>รายชื่อนักเรียนในที่ปรึกษา ({homeroomStudents.length} คน)</div>
-        {homeroomStudents.map((s, i) => (
-          <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${C.border}` }}>
-            <div><span style={{color: C.muted, marginRight: 8}}>{s.number || i+1}.</span><span style={{fontWeight: 600}}>{s.name}</span> {s.nickname && `(${s.nickname})`}</div>
-            <div style={{color: C.red, fontSize: 12}}>{s.id}</div>
+      {isTeacher && (
+        <button onClick={() => setActiveStudent(null)} style={{background:'transparent', border:'none', color:C.red, fontWeight:600, fontSize:15, marginBottom:16, cursor:'pointer', display:'flex', alignItems:'center', gap:6}}>
+          <span>←</span> กลับไปหน้ารายชื่อ
+        </button>
+      )}
+      <div style={{...sCard, display:'flex', alignItems:'center', gap:14}}>
+        <div style={{position:'relative'}}>
+          <div style={{width:72, height:72, borderRadius:36, background:C.light, border:`2px solid ${C.red}`, display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden'}}>
+             {actProfile.profilePhoto ? <img src={actProfile.profilePhoto} alt="profile" style={{width:'100%', height:'100%', objectFit:'cover'}}/> : <span style={{fontSize:24}}>👤</span>}
           </div>
-        ))}
-        {homeroomStudents.length === 0 && <div style={{ color: C.muted, textAlign: 'center', padding: 20 }}>ไม่มีนักเรียนในห้องนี้</div>}
+          {isTeacher && editMode && (
+             <label style={{position:'absolute', bottom:-4, right:-4, background:C.red, color:'white', width:28, height:28, borderRadius:14, display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', fontSize:14, border:'2px solid white'}}>
+               📷
+               <input type="file" accept="image/*" onChange={handlePhotoUpload} style={{display:'none'}} />
+             </label>
+          )}
+        </div>
+        <div>
+          <div style={{fontWeight:700, fontSize:18}}>{actStu.name}</div>
+          <div style={{color:C.muted, fontSize:14}}>ชื่อเล่น: {actStu.nickname || '-'} {actStu.chineseName ? `· ${actStu.chineseName}` : ''}</div>
+          <div style={{color:C.muted, fontSize:13}}>รหัส: {actStu.id} · เลขที่ {actStu.number||'-'}</div>
+        </div>
       </div>
+      <div style={{display:'flex', gap:6, marginBottom:12, background:'white', padding:5, borderRadius:10, border:`1px solid ${C.border}`}}>
+        <button onClick={()=>setTab('profile')} style={{...sTab(tab==='profile'), flex:1}}>📋 ข้อมูลส่วนตัว</button>
+        <button onClick={()=>setTab('savings')} style={{...sTab(tab==='savings'), flex:1}}>💰 การออมเงิน</button>
+      </div>
+
+      {tab === 'profile' && (
+        <div style={sCard}>
+          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12}}>
+            <div style={{fontWeight:600, fontSize:15}}>ข้อมูลติดต่อ / ผู้ปกครอง</div>
+            {isTeacher && (
+              !editMode ? <button onClick={()=>{setProfileForm({...actProfile}); setEditMode(true);}} style={{...sBtn(false,true), fontSize:12}}>✏️ แก้ไข</button>
+                        : <button onClick={saveProfile} style={{...sBtn(true,true), fontSize:12}}>💾 บันทึก</button>
+            )}
+          </div>
+          <div style={{display:'grid', gap:10}}>
+            <div>
+              <div style={{fontSize:12, color:C.muted, marginBottom:2}}>ชื่อ-สกุล ผู้ปกครอง</div>
+              {editMode ? <input value={profileForm.parentName||''} onChange={e=>setProfileForm(p=>({...p, parentName:e.target.value}))} style={sInp}/> : <div style={{fontWeight:500}}>{actProfile.parentName || '-'}</div>}
+            </div>
+            <div>
+              <div style={{fontSize:12, color:C.muted, marginBottom:2}}>เบอร์โทรศัพท์ (ติดต่อฉุกเฉิน)</div>
+              {editMode ? <input type="tel" value={profileForm.phone||''} onChange={e=>setProfileForm(p=>({...p, phone:e.target.value}))} style={sInp}/> : <div style={{fontWeight:500}}>{actProfile.phone || '-'}</div>}
+            </div>
+            <div>
+              <div style={{fontSize:12, color:C.muted, marginBottom:2}}>ที่อยู่ / ข้อมูลการเดินทาง</div>
+              {editMode ? <textarea rows="3" value={profileForm.address||''} onChange={e=>setProfileForm(p=>({...p, address:e.target.value}))} style={sInp}/> : <div style={{fontWeight:500}}>{actProfile.address || '-'}</div>}
+            </div>
+            <div>
+              <div style={{fontSize:12, color:C.muted, marginBottom:2}}>โรคประจำตัว / หมายเหตุอื่นๆ</div>
+              {editMode ? <textarea rows="2" value={profileForm.note||''} onChange={e=>setProfileForm(p=>({...p, note:e.target.value}))} style={sInp}/> : <div style={{fontWeight:500, color: actProfile.note ? C.red : C.text}}>{actProfile.note || '-'}</div>}
+            </div>
+          </div>
+          {isTeacher && editMode && (
+            <button onClick={()=>setEditMode(false)} style={{...sBtn(false), width:'100%', marginTop:14}}>ยกเลิกการแก้ไข</button>
+          )}
+        </div>
+      )}
+
+      {tab === 'savings' && (
+        <>
+          <div style={{...sCard, background:`linear-gradient(135deg, #16a34a, #15803d)`, color:'white', textAlign:'center'}}>
+            <div style={{fontSize:14, opacity:0.9}}>ยอดเงินออมปัจจุบัน</div>
+            <div style={{fontSize:42, fontWeight:700, margin:'4px 0'}}>{currentBal.toLocaleString()} <span style={{fontSize:20, fontWeight:400}}>฿</span></div>
+          </div>
+          {isTeacher && (
+            <form onSubmit={addTransaction} style={{...sCard, display:'grid', gap:10}}>
+              <div style={{fontWeight:600, fontSize:14}}>บันทึกรายการ ฝาก-ถอน</div>
+              <div style={{display:'flex', gap:6}}>
+                <label style={{flex:1, display:'flex', alignItems:'center', gap:6, background:saveForm.type==='deposit'?'#dcfce7':'white', border:`1.5px solid ${saveForm.type==='deposit'?'#16a34a':C.border}`, padding:'10px', borderRadius:8, cursor:'pointer'}}>
+                  <input type="radio" checked={saveForm.type==='deposit'} onChange={()=>setSaveForm(p=>({...p, type:'deposit'}))} style={{accentColor:'#16a34a'}}/> 
+                  <span style={{fontWeight:600, color:saveForm.type==='deposit'?'#16a34a':C.text}}>📥 ฝากเงิน</span>
+                </label>
+                <label style={{flex:1, display:'flex', alignItems:'center', gap:6, background:saveForm.type==='withdraw'?'#fee2e2':'white', border:`1.5px solid ${saveForm.type==='withdraw'?'#dc2626':C.border}`, padding:'10px', borderRadius:8, cursor:'pointer'}}>
+                  <input type="radio" checked={saveForm.type==='withdraw'} onChange={()=>setSaveForm(p=>({...p, type:'withdraw'}))} style={{accentColor:'#dc2626'}}/> 
+                  <span style={{fontWeight:600, color:saveForm.type==='withdraw'?'#dc2626':C.text}}>📤 ถอนเงิน</span>
+                </label>
+              </div>
+              <div style={{display:'flex', gap:8}}>
+                <div style={{flex:1}}>
+                  <div style={{fontSize:12, color:C.muted, marginBottom:4}}>จำนวนเงิน (บาท)*</div>
+                  <input type="number" min="1" step="1" required value={saveForm.amount} onChange={e=>setSaveForm(p=>({...p, amount:e.target.value}))} style={sInp} placeholder="0.00"/>
+                </div>
+                <div style={{flex:2}}>
+                  <div style={{fontSize:12, color:C.muted, marginBottom:4}}>หมายเหตุ</div>
+                  <input value={saveForm.note} onChange={e=>setSaveForm(p=>({...p, note:e.target.value}))} style={sInp} placeholder="เช่น ค่าขนม, ซื้ออุปกรณ์"/>
+                </div>
+              </div>
+              <button type="submit" style={{...sBtn(true), background: saveForm.type==='deposit'?'#16a34a':'#dc2626', marginTop:4}}>
+                บันทึก{saveForm.type==='deposit'?'การฝาก':'การถอน'}เงิน
+              </button>
+            </form>
+          )}
+          <div style={sCard}>
+            <div style={{fontWeight:600, fontSize:15, marginBottom:12}}>ประวัติทำรายการ ({actSavings.length})</div>
+            {actSavings.length === 0 ? <div style={{textAlign:'center', color:C.muted, padding:10}}>ยังไม่มีประวัติการทำรายการ</div> : (
+              <div style={{display:'flex', flexDirection:'column', gap:8}}>
+                {actSavings.map(tx => (
+                  <div key={tx.id} style={{display:'flex', justifyContent:'space-between', alignItems:'center', paddingBottom:8, borderBottom:`1px dashed ${C.border}`}}>
+                    <div>
+                      <div style={{fontWeight:600, color: tx.type==='deposit' ? '#16a34a' : '#dc2626', fontSize:14}}>
+                        {tx.type==='deposit' ? '📥 ฝากเข้า' : '📤 ถอนออก'}
+                      </div>
+                      <div style={{fontSize:12, color:C.muted}}>{fmtDate(tx.date)} {tx.note && `· ${tx.note}`}</div>
+                    </div>
+                    <div style={{display:'flex', alignItems:'center', gap:10}}>
+                      <div style={{fontWeight:700, fontSize:15, color: tx.type==='deposit' ? '#16a34a' : '#dc2626'}}>
+                        {tx.type==='deposit' ? '+' : '-'}{tx.amount.toLocaleString()}
+                      </div>
+                      {isTeacher && <button onClick={()=>delTransaction(tx.id)} style={{background:'none', border:'none', color:'#dc2626', cursor:'pointer', padding:'2px 4px'}}>✖</button>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -200,47 +442,27 @@ function Drawer({open,onClose,current,onNav,data}){return(<><div onClick={onClos
 
 // ===== LOGIN =====
 function LoginScreen({data,onLogin}){
-  const[id,setId]=useState('');
-  const[pin,setPin]=useState('');
-  const[err,setErr]=useState('');
-
+  const[id,setId]=useState('');const[pin,setPin]=useState('');const[err,setErr]=useState('');
   const doLogin=()=>{
     const tUser = data.teacherUsername || 'puntoy';
     const tPass = data.password || '0000';
-    
-    if(id.trim() === tUser && pin === tPass){
-      onLogin({role:'teacher'});
-    }else{
+    if(id.trim() === tUser && pin === tPass){onLogin({role:'teacher'});}else{
       const s=data.students.find(x=>x.id===id.trim());
-      if(s){
-        if(s.pin===pin) onLogin({role:'student',id:s.id});
-        else setErr('PIN ไม่ถูกต้อง');
-      }else{
-        setErr('ชื่อผู้ใช้ / รหัสนักเรียน หรือ รหัสผ่าน ไม่ถูกต้อง');
-      }
+      if(s){if(s.pin===pin) onLogin({role:'student',id:s.id}); else setErr('PIN ไม่ถูกต้อง');}else{setErr('ชื่อผู้ใช้ / รหัสนักเรียน หรือ รหัสผ่าน ไม่ถูกต้อง');}
     }
   };
-
   return(
     <div style={{minHeight:'100vh',background:C.bg,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:24}}>
       <div style={{textAlign:'center',marginBottom:32}}>
         <div style={{width:88,height:88,borderRadius:24,background:`linear-gradient(135deg,${C.red},${C.dark})`,display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px',boxShadow:'0 8px 32px rgba(192,57,43,0.3)'}}><span style={{fontSize:52,color:'white',lineHeight:1}}>中</span></div>
-        <div style={{fontSize:24,fontWeight:700,color:C.red}}>{data.appName||'ห้องเรียนของคุณครูต้นฝน'}</div>
-        <div style={{color:C.muted,fontSize:14,marginTop:4}}>ระบบจัดการการเรียนการสอน</div>
-      </div>
-      
+        <div style={{fontSize:24,fontWeight:700,color:C.red}}>{data.appName||'ห้องเรียนของคุณครูต้นฝน'}</div><div style={{color:C.muted,fontSize:14,marginTop:4}}>ระบบจัดการการเรียนการสอน</div></div>
       <div style={{...sCard,width:'100%',maxWidth:340}}>
         <label style={{fontSize:12,color:C.muted,marginBottom:4,display:'block'}}>ชื่อผู้ใช้ (ครู) หรือ รหัสนักเรียน</label>
         <input placeholder="Username หรือ รหัสนักเรียน" value={id} onChange={e=>setId(e.target.value)} onKeyDown={e=>e.key==='Enter'&&doLogin()} style={{...sInp,marginBottom:12}} autoFocus/>
-        
         <label style={{fontSize:12,color:C.muted,marginBottom:4,display:'block'}}>รหัสผ่าน (ครู) หรือ PIN 4 หลัก (นักเรียน)</label>
         <input type="password" placeholder="รหัสผ่าน หรือ PIN" value={pin} onChange={e=>setPin(e.target.value)} onKeyDown={e=>e.key==='Enter'&&doLogin()} style={{...sInp,marginBottom:16}}/>
-        
         {err&&<div style={{color:C.red,fontSize:13,marginBottom:12,padding:'8px 10px',background:'#fff0f0',borderRadius:6,textAlign:'center'}}>{err}</div>}
-        
-        <button onClick={doLogin} style={{...sBtn(true),width:'100%',padding:12}}>เข้าสู่ระบบ</button>
-      </div>
-    </div>
+        <button onClick={doLogin} style={{...sBtn(true),width:'100%',padding:12}}>เข้าสู่ระบบ</button></div></div>
   );
 }
 
@@ -264,9 +486,7 @@ function AttendancePage({data,update,initType,initClass,toast}){
   const subj=data.subjects.find(s=>s.id===subjId);
   const checkedPeriods=useMemo(()=>{if(tab!=='class'||!cls||!subjId)return[];const ps=new Set();data.attendance.filter(a=>a.date===date&&a.type==='class'&&a.subjectId===subjId&&students.some(s=>s.id===a.studentId)).forEach(a=>{if(a.period)ps.add(a.period);});return Array.from(ps).sort();},[data.attendance,date,tab,cls,subjId,students]);
   const getRec=id=>data.attendance.find(a=>a.date===date&&a.type===tab&&a.studentId===id&&(tab==='morning'||(a.subjectId===subjId&&a.period===period)));
-  const saveStatus=(id,status,customScore,note)=>{update(prev=>{const a=prev.attendance.filter(x=>!(x.date===date&&x.type===tab&&x.studentId===id&&(tab==='morning'||(x.subjectId===subjId&&x.period===period))));a.push({date,type:tab,studentId:id,status,...(tab==='class'?{subjectId:subjId,period}:{}),
-    ...(customScore!==undefined?{customScore}:{}),
-    ...(note?{note}:{})});return{...prev,attendance:a};});};
+  const saveStatus=(id,status,customScore,note)=>{update(prev=>{const a=prev.attendance.filter(x=>!(x.date===date&&x.type===tab&&x.studentId===id&&(tab==='morning'||(x.subjectId===subjId&&x.period===period))));a.push({date,type:tab,studentId:id,status,...(tab==='class'?{subjectId:subjId,period}:{}),...(customScore!==undefined?{customScore}:{}),...(note?{note}:{})});return{...prev,attendance:a};});};
   const setStatus=(id,status)=>{if(STATUS[status]?.custom&&tab==='class'){const e=getRec(id);setScoreModal({studentId:id,status,customScore:e?.customScore??0,note:e?.note||''});}else saveStatus(id,status);};
   const markAll=status=>{if(STATUS[status]?.custom)return;update(prev=>{let a=prev.attendance.filter(x=>!(x.date===date&&x.type===tab&&students.some(s=>s.id===x.studentId)&&(tab==='morning'||(x.subjectId===subjId&&x.period===period))));students.forEach(s=>a.push({date,type:tab,studentId:s.id,status,...(tab==='class'?{subjectId:subjId,period}:{})}));return{...prev,attendance:a};});toast(`${STATUS[status].label}ทุกคน ✓`,'success');};
   const counted=st=>students.filter(s=>getRec(s.id)?.status===st).length;
@@ -277,11 +497,9 @@ function AttendancePage({data,update,initType,initClass,toast}){
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:tab==='class'?10:0}}>
         <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>วันที่</div><input type="date" value={date} onChange={e=>setDate(e.target.value)} style={sInp}/></div>
         <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ห้อง</div>
-          {tab==='morning'?<input value={data.homeroom} disabled style={{...sInp,background:C.light,fontWeight:700,color:C.red}}/>:
-          <select value={cls} onChange={e=>setCls(e.target.value)} style={{...sInp,fontFamily:'inherit'}}><option value="">-- เลือก --</option>{classesHave.map(c=><option key={c} value={c}>{c} ({data.students.filter(s=>s.classId===c).length})</option>)}</select>}</div></div>
+          {tab==='morning'?<input value={data.homeroom} disabled style={{...sInp,background:C.light,fontWeight:700,color:C.red}}/>:<select value={cls} onChange={e=>setCls(e.target.value)} style={{...sInp,fontFamily:'inherit'}}><option value="">-- เลือก --</option>{classesHave.map(c=><option key={c} value={c}>{c} ({data.students.filter(s=>s.classId===c).length})</option>)}</select>}</div></div>
       {tab==='class'&&<div style={{display:'flex',gap:8,alignItems:'flex-end'}}>
-        <div style={{flex:1}}><div style={{fontSize:12,color:C.muted,marginBottom:4}}>รายวิชา</div>
-          <select value={subjId} onChange={e=>{setSubjId(e.target.value);setPeriod(1);}} style={{...sInp,fontFamily:'inherit'}}>{data.subjects.map(s=><option key={s.id} value={s.id}>{s.code?`${s.code} ${s.name}`:s.name}</option>)}</select></div>
+        <div style={{flex:1}}><div style={{fontSize:12,color:C.muted,marginBottom:4}}>รายวิชา</div><select value={subjId} onChange={e=>{setSubjId(e.target.value);setPeriod(1);}} style={{...sInp,fontFamily:'inherit'}}>{data.subjects.map(s=><option key={s.id} value={s.id}>{s.code?`${s.code} ${s.name}`:s.name}</option>)}</select></div>
         <div style={{flexShrink:0}}><div style={{fontSize:12,color:C.muted,marginBottom:4}}>คาบ {checkedPeriods.length>0&&<span style={{color:'#16a34a'}}>✓{checkedPeriods.join(',')}</span>}</div>
           <div style={{display:'flex',gap:6}}>{[1,2].map(p=><button key={p} onClick={()=>setPeriod(p)} style={{width:48,height:42,borderRadius:8,border:`1.5px solid ${period===p?C.red:checkedPeriods.includes(p)?'#16a34a':C.border}`,background:period===p?C.red:checkedPeriods.includes(p)?'#dcfce7':'white',color:period===p?'white':checkedPeriods.includes(p)?'#16a34a':C.text,fontSize:13,fontWeight:period===p?700:500,cursor:'pointer',fontFamily:'inherit'}}>{p}{checkedPeriods.includes(p)&&p!==period?'✓':''}</button>)}</div></div></div>}
       {tab==='morning'&&<div style={{fontSize:12,color:C.muted,marginTop:8}}>เข้าแถว <b style={{color:C.red}}>{data.homeroom}</b> · เก็บสถิติ ไม่นับคะแนน</div>}
@@ -314,13 +532,10 @@ function ScoresPage({data,update,toast}){
 
   return(<div style={{padding:'14px 14px 100px'}}><div style={{fontWeight:700,fontSize:18,marginBottom:12,color:C.text}}>📊 คะแนน</div>
     <div style={{display:'flex',gap:6,marginBottom:12,background:'white',padding:5,borderRadius:10,border:`1px solid ${C.border}`}}><button onClick={()=>setSub('entry')} style={{...sTab(sub==='entry'),flex:1}}>📝 บันทึกคะแนน</button><button onClick={()=>setSub('manage')} style={{...sTab(sub==='manage'),flex:1}}>📚 วิชา/หมวดหมู่</button></div>
-
     {sub==='entry'&&<><div style={sCard}>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:10}}>
-        <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>รายวิชา</div>
-          <select value={subjId} onChange={e=>{setSubjId(e.target.value);setCatId('');setSubCatId('');}} style={{...sInp,fontFamily:'inherit'}}>{data.subjects.map(s=><option key={s.id} value={s.id}>{s.code?`${s.code} ${s.name}`:s.name}</option>)}</select></div>
-        <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ห้องเรียน</div>
-          <select value={cls} onChange={e=>setCls(e.target.value)} style={{...sInp,fontFamily:'inherit'}}><option value="">-- เลือก --</option>{classesHave.map(c=><option key={c} value={c}>{c}</option>)}</select></div></div>
+        <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>รายวิชา</div><select value={subjId} onChange={e=>{setSubjId(e.target.value);setCatId('');setSubCatId('');}} style={{...sInp,fontFamily:'inherit'}}>{data.subjects.map(s=><option key={s.id} value={s.id}>{s.code?`${s.code} ${s.name}`:s.name}</option>)}</select></div>
+        <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ห้องเรียน</div><select value={cls} onChange={e=>setCls(e.target.value)} style={{...sInp,fontFamily:'inherit'}}><option value="">-- เลือก --</option>{classesHave.map(c=><option key={c} value={c}>{c}</option>)}</select></div></div>
       <div style={{fontSize:12,color:C.muted,marginBottom:6}}>หมวดหลัก</div>
       <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:cat?.subs?.length>0?8:0}}>{subjCats.map(c=><button key={c.id} onClick={()=>{setCatId(c.id);setSubCatId('');}} style={{...sTab(catId===c.id),padding:'6px 12px',fontSize:13}}>{c.name} <span style={{opacity:0.7}}>/{getCatMax(c)}</span></button>)}{!subjCats.length&&<div style={{fontSize:13,color:C.muted}}>ยังไม่มีหมวด → ไปแท็บ วิชา/หมวดหมู่</div>}</div>
       {cat?.subs?.length>0&&<div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>หมวดย่อย</div><div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{cat.subs.map(s=><button key={s.id} onClick={()=>setSubCatId(s.id)} style={{...sTab(subCatId===s.id),padding:'6px 10px',fontSize:12}}>{s.name} /{s.max}{s.date?` · ${fmtDate(s.date)}`:''}</button>)}</div></div>}</div>
@@ -328,41 +543,17 @@ function ScoresPage({data,update,toast}){
         {students.map((stu,i)=>{const saved=getScore(stu.id);const val=draft[stu.id]!==undefined?draft[stu.id]:saved;const g=saved!==''?getGrade(parseFloat(saved),entryMax):null;return(<div key={stu.id} style={{display:'flex',alignItems:'center',gap:8,padding:'8px 0',borderBottom:`1px solid ${C.border}`}}><span style={{width:26,fontSize:12,color:C.muted,textAlign:'right'}}>{stu.number||i+1}</span><span style={{flex:1,fontSize:14,fontWeight:500}}>{stu.nickname||stu.name}</span><input type="number" min={0} max={entryMax} value={val} placeholder="-" onChange={e=>setDraft(p=>({...p,[stu.id]:e.target.value}))} onBlur={()=>{if(draft[stu.id]!==undefined)saveScore(stu.id,draft[stu.id]);}} onKeyDown={e=>{if(e.key==='Enter')saveScore(stu.id,draft[stu.id]??saved);}} style={{width:60,padding:'6px 8px',borderRadius:6,border:`1.5px solid ${draft[stu.id]!==undefined?C.red:C.border}`,textAlign:'center',fontSize:14,fontFamily:'inherit'}}/><span style={{fontSize:12,color:C.muted}}>/{entryMax}</span>{g&&<span style={{fontSize:12,fontWeight:700,width:24,color:gradeColor(g)}}>{g.label}</span>}</div>);})}
         <div style={{marginTop:12,background:C.light,borderRadius:8,padding:'10px 12px'}}><div style={{fontSize:13,fontWeight:700,color:C.text,marginBottom:6}}>รวมทุกหมวด · {subj?.name}</div>{students.map(stu=>{const mx=subjCats.reduce((s,c)=>s+getCatMax(c),0);const tot=subjCats.reduce((s,c)=>s+getCatScore(stu.id,c,data.scores,data.term,data.year),0);const has=subjCats.some(c=>hasCatScore(stu.id,c,data.scores,data.term,data.year));const g=has?getGrade(tot,mx):null;return(<div key={stu.id} style={{display:'flex',justifyContent:'space-between',fontSize:13,padding:'3px 0',borderTop:`1px solid ${C.border}`}}><span>{stu.nickname||stu.name}</span>{has?<span style={{fontWeight:700}}>{tot}/{mx} <span style={{color:gradeColor(g)}}>{g.label}</span></span>:<span style={{color:C.muted}}>-</span>}</div>);})}</div></div>}
       {!cls&&<div style={{textAlign:'center',color:C.muted,padding:48}}>📊 เลือกวิชาและห้อง</div>}</>}
-
     {sub==='manage'&&<div>
       <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:12}}><div style={{fontSize:14,color:C.muted}}>{data.subjects.length} วิชา</div><button onClick={()=>{setSubjForm({name:'',code:'',credits:1});setShowSubjModal('add');}} style={sBtn(true,true)}>+ เพิ่มวิชา</button></div>
       {data.subjects.map(s=>{const sCats=data.categories.filter(c=>c.subjectId===s.id);const sMax=sCats.reduce((t,c)=>t+getCatMax(c),0);const expanded=expandedSubj[s.id];
-        return(<div key={s.id} style={{...sCard,marginBottom:10,padding:0,overflow:'hidden'}}>
-          <div style={{padding:'12px 16px',display:'flex',alignItems:'center',gap:10,cursor:'pointer',background:expanded?C.light:'white'}} onClick={()=>toggleSubj(s.id)}>
-            <div style={{flex:1}}><div style={{fontWeight:700,fontSize:15}}>{s.code&&<span style={{color:C.red,marginRight:6}}>{s.code}</span>}{s.name}</div><div style={{fontSize:12,color:C.muted}}>{s.credits} นก. · {creditToHours(s.credits)} ชม./สป. · {sCats.length} หมวด · เต็ม {sMax}</div></div>
-            <div style={{display:'flex',gap:6,alignItems:'center'}}>
-              <button onClick={e=>{e.stopPropagation();setSubjForm({...s});setShowSubjModal('edit');}} style={{...sBtn(false,true),padding:'5px 10px',fontSize:12}}>แก้ไข</button>
-              <button onClick={e=>{e.stopPropagation();delSubj(s.id);}} style={{...sBtn(false,true),color:'#dc2626',padding:'5px 10px',fontSize:12}}>ลบ</button>
-              <span style={{fontSize:16,color:C.muted,transform:expanded?'rotate(90deg)':'rotate(0)',transition:'transform 0.2s'}}>›</span></div></div>
-          {expanded&&<div style={{borderTop:`1px solid ${C.border}`,padding:'10px 16px 14px'}}>
-            <div style={{display:'flex',justifyContent:'space-between',marginBottom:8}}><div style={{fontSize:13,fontWeight:600,color:C.text}}>หมวดคะแนน</div><button onClick={()=>{setCatForm({name:'',max:'20',subjectId:s.id,id:null});setCatModal('add');}} style={{...sBtn(true,true),fontSize:11}}>+ หมวด</button></div>
-            {sCats.map(c=><div key={c.id} style={{marginBottom:8,background:C.light,borderRadius:8,padding:'8px 12px'}}>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:c.subs?.length?6:0}}>
-                <span style={{fontWeight:600,fontSize:14}}>{c.name} <span style={{color:C.muted,fontWeight:400}}>/{getCatMax(c)}</span></span>
-                <div style={{display:'flex',gap:4}}><button onClick={()=>{setCatForm({name:c.name,max:c.max,subjectId:c.subjectId,id:c.id});setCatModal('edit');}} style={{fontSize:11,color:C.text,background:'white',border:`1px solid ${C.border}`,padding:'3px 8px',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>แก้ไข</button><button onClick={()=>delCat(c.id)} style={{fontSize:11,color:'#dc2626',background:'white',border:'1px solid #fecaca',padding:'3px 8px',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>ลบ</button><button onClick={()=>{setCatId(c.id);setSubCatForm({name:'',max:'5',date:todayStr()});setSubCatModal('add');}} style={{fontSize:11,color:C.red,background:'white',border:`1px solid ${C.red}`,padding:'3px 8px',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>+ย่อย</button></div></div>
-              {c.subs?.map(sb=><div key={sb.id} style={{display:'flex',justifyContent:'space-between',padding:'4px 0 4px 8px',borderTop:`1px dashed ${C.border}`,fontSize:12}}>
-                <span style={{color:C.muted}}>{sb.name} /{sb.max}{sb.date?` · ${fmtDate(sb.date)}`:''}</span>
-                <div style={{display:'flex',gap:4}}><button onClick={()=>{setCatId(c.id);setSubCatForm({...sb});setSubCatModal('edit');}} style={{fontSize:10,color:C.text,background:'white',border:`1px solid ${C.border}`,padding:'2px 6px',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>แก้</button><button onClick={()=>{setCatId(c.id);delSubCat(sb.id);}} style={{fontSize:10,color:'#dc2626',background:'white',border:'1px solid #fecaca',padding:'2px 6px',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>ลบ</button></div></div>)}
-            </div>)}
-            {!sCats.length&&<div style={{fontSize:13,color:C.muted,textAlign:'center',padding:8}}>ยังไม่มีหมวดคะแนน</div>}
-          </div>}</div>);})}
-    </div>}
-
-    <Sheet open={!!showSubjModal} title={showSubjModal==='add'?'➕ เพิ่มวิชา':'✏️ แก้ไขวิชา'} onClose={()=>setShowSubjModal(null)}>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>รหัสวิชา</div><input value={subjForm.code||''} onChange={e=>setSubjForm(p=>({...p,code:e.target.value}))} style={sInp} placeholder="เช่น จ20201"/></div><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>หน่วยกิต</div><select value={subjForm.credits} onChange={e=>setSubjForm(p=>({...p,credits:parseFloat(e.target.value)}))} style={{...sInp,fontFamily:'inherit'}}>{CREDIT_OPTIONS.map(c=><option key={c} value={c}>{c} นก. ({creditToHours(c)} ชม./สป.)</option>)}</select></div></div>
-      <div style={{fontSize:12,color:C.muted,marginBottom:4}}>ชื่อวิชา *</div><input value={subjForm.name||''} onChange={e=>setSubjForm(p=>({...p,name:e.target.value}))} style={{...sInp,marginBottom:14}} placeholder="ชื่อวิชา"/>
-      <div style={{display:'flex',gap:8}}><button onClick={()=>setShowSubjModal(null)} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={saveSubj} style={{...sBtn(true),flex:1}}>บันทึก</button></div></Sheet>
-    <Sheet open={!!catModal} title={catModal==='add'?'➕ เพิ่มหมวด':'✏️ แก้ไข'} onClose={()=>setCatModal(null)}>
-      <input value={catForm.name} onChange={e=>setCatForm(p=>({...p,name:e.target.value}))} style={{...sInp,marginBottom:8}} placeholder="ชื่อหมวด"/><input type="number" value={catForm.max} onChange={e=>setCatForm(p=>({...p,max:e.target.value}))} style={{...sInp,marginBottom:14}} placeholder="คะแนนเต็ม"/>
-      <div style={{display:'flex',gap:8}}><button onClick={()=>setCatModal(null)} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={saveCat} style={{...sBtn(true),flex:1}}>บันทึก</button></div></Sheet>
-    <Sheet open={!!subCatModal} title={subCatModal==='add'?'➕ หมวดย่อย':'✏️ แก้ไข'} onClose={()=>setSubCatModal(null)}>
-      <input value={subCatForm.name} onChange={e=>setSubCatForm(p=>({...p,name:e.target.value}))} style={{...sInp,marginBottom:8}} placeholder="ชื่อ"/><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:14}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>คะแนนเต็ม</div><input type="number" value={subCatForm.max} onChange={e=>setSubCatForm(p=>({...p,max:e.target.value}))} style={sInp}/></div><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>วันที่</div><input type="date" value={subCatForm.date} onChange={e=>setSubCatForm(p=>({...p,date:e.target.value}))} style={sInp}/></div></div>
-      <div style={{display:'flex',gap:8}}><button onClick={()=>setSubCatModal(null)} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={saveSubCat} style={{...sBtn(true),flex:1}}>บันทึก</button></div></Sheet>
+        return(<div key={s.id} style={{...sCard,marginBottom:10,padding:0,overflow:'hidden'}}><div style={{padding:'12px 16px',display:'flex',alignItems:'center',gap:10,cursor:'pointer',background:expanded?C.light:'white'}} onClick={()=>toggleSubj(s.id)}><div style={{flex:1}}><div style={{fontWeight:700,fontSize:15}}>{s.code&&<span style={{color:C.red,marginRight:6}}>{s.code}</span>}{s.name}</div><div style={{fontSize:12,color:C.muted}}>{s.credits} นก. · {creditToHours(s.credits)} ชม./สป. · {sCats.length} หมวด · เต็ม {sMax}</div></div><div style={{display:'flex',gap:6,alignItems:'center'}}><button onClick={e=>{e.stopPropagation();setSubjForm({...s});setShowSubjModal('edit');}} style={{...sBtn(false,true),padding:'5px 10px',fontSize:12}}>แก้ไข</button><button onClick={e=>{e.stopPropagation();delSubj(s.id);}} style={{...sBtn(false,true),color:'#dc2626',padding:'5px 10px',fontSize:12}}>ลบ</button><span style={{fontSize:16,color:C.muted,transform:expanded?'rotate(90deg)':'rotate(0)',transition:'transform 0.2s'}}>›</span></div></div>
+          {expanded&&<div style={{borderTop:`1px solid ${C.border}`,padding:'10px 16px 14px'}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:8}}><div style={{fontSize:13,fontWeight:600,color:C.text}}>หมวดคะแนน</div><button onClick={()=>{setCatForm({name:'',max:'20',subjectId:s.id,id:null});setCatModal('add');}} style={{...sBtn(true,true),fontSize:11}}>+ หมวด</button></div>
+            {sCats.map(c=><div key={c.id} style={{marginBottom:8,background:C.light,borderRadius:8,padding:'8px 12px'}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:c.subs?.length?6:0}}><span style={{fontWeight:600,fontSize:14}}>{c.name} <span style={{color:C.muted,fontWeight:400}}>/{getCatMax(c)}</span></span><div style={{display:'flex',gap:4}}><button onClick={()=>{setCatForm({name:c.name,max:c.max,subjectId:c.subjectId,id:c.id});setCatModal('edit');}} style={{fontSize:11,color:C.text,background:'white',border:`1px solid ${C.border}`,padding:'3px 8px',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>แก้ไข</button><button onClick={()=>delCat(c.id)} style={{fontSize:11,color:'#dc2626',background:'white',border:'1px solid #fecaca',padding:'3px 8px',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>ลบ</button><button onClick={()=>{setCatId(c.id);setSubCatForm({name:'',max:'5',date:todayStr()});setSubCatModal('add');}} style={{fontSize:11,color:C.red,background:'white',border:`1px solid ${C.red}`,padding:'3px 8px',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>+ย่อย</button></div></div>
+              {c.subs?.map(sb=><div key={sb.id} style={{display:'flex',justifyContent:'space-between',padding:'4px 0 4px 8px',borderTop:`1px dashed ${C.border}`,fontSize:12}}><span style={{color:C.muted}}>{sb.name} /{sb.max}{sb.date?` · ${fmtDate(sb.date)}`:''}</span><div style={{display:'flex',gap:4}}><button onClick={()=>{setCatId(c.id);setSubCatForm({...sb});setSubCatModal('edit');}} style={{fontSize:10,color:C.text,background:'white',border:`1px solid ${C.border}`,padding:'2px 6px',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>แก้</button><button onClick={()=>{setCatId(c.id);delSubCat(sb.id);}} style={{fontSize:10,color:'#dc2626',background:'white',border:'1px solid #fecaca',padding:'2px 6px',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>ลบ</button></div></div>)}</div>)}
+            {!sCats.length&&<div style={{fontSize:13,color:C.muted,textAlign:'center',padding:8}}>ยังไม่มีหมวดคะแนน</div>}</div>}</div>);})}</div>}
+    <Sheet open={!!showSubjModal} title={showSubjModal==='add'?'➕ เพิ่มวิชา':'✏️ แก้ไขวิชา'} onClose={()=>setShowSubjModal(null)}><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>รหัสวิชา</div><input value={subjForm.code||''} onChange={e=>setSubjForm(p=>({...p,code:e.target.value}))} style={sInp} placeholder="เช่น จ20201"/></div><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>หน่วยกิต</div><select value={subjForm.credits} onChange={e=>setSubjForm(p=>({...p,credits:parseFloat(e.target.value)}))} style={{...sInp,fontFamily:'inherit'}}>{CREDIT_OPTIONS.map(c=><option key={c} value={c}>{c} นก. ({creditToHours(c)} ชม./สป.)</option>)}</select></div></div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ชื่อวิชา *</div><input value={subjForm.name||''} onChange={e=>setSubjForm(p=>({...p,name:e.target.value}))} style={{...sInp,marginBottom:14}} placeholder="ชื่อวิชา"/><div style={{display:'flex',gap:8}}><button onClick={()=>setShowSubjModal(null)} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={saveSubj} style={{...sBtn(true),flex:1}}>บันทึก</button></div></Sheet>
+    <Sheet open={!!catModal} title={catModal==='add'?'➕ เพิ่มหมวด':'✏️ แก้ไข'} onClose={()=>setCatModal(null)}><input value={catForm.name} onChange={e=>setCatForm(p=>({...p,name:e.target.value}))} style={{...sInp,marginBottom:8}} placeholder="ชื่อหมวด"/><input type="number" value={catForm.max} onChange={e=>setCatForm(p=>({...p,max:e.target.value}))} style={{...sInp,marginBottom:14}} placeholder="คะแนนเต็ม"/><div style={{display:'flex',gap:8}}><button onClick={()=>setCatModal(null)} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={saveCat} style={{...sBtn(true),flex:1}}>บันทึก</button></div></Sheet>
+    <Sheet open={!!subCatModal} title={subCatModal==='add'?'➕ หมวดย่อย':'✏️ แก้ไข'} onClose={()=>setSubCatModal(null)}><input value={subCatForm.name} onChange={e=>setSubCatForm(p=>({...p,name:e.target.value}))} style={{...sInp,marginBottom:8}} placeholder="ชื่อ"/><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:14}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>คะแนนเต็ม</div><input type="number" value={subCatForm.max} onChange={e=>setSubCatForm(p=>({...p,max:e.target.value}))} style={sInp}/></div><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>วันที่</div><input type="date" value={subCatForm.date} onChange={e=>setSubCatForm(p=>({...p,date:e.target.value}))} style={sInp}/></div></div><div style={{display:'flex',gap:8}}><button onClick={()=>setSubCatModal(null)} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={saveSubCat} style={{...sBtn(true),flex:1}}>บันทึก</button></div></Sheet>
   </div>);}
 
 // ===== STUDENTS =====
@@ -378,29 +569,19 @@ function StudentsPage({data,update,toast}){const[sub,setSub]=useState('list');co
   const delClass=c=>{if(data.students.some(s=>s.classId===c))return toast('มีนักเรียนอยู่','error');if(!window.confirm(`ลบ ${c}?`))return;update(prev=>({...prev,classes:prev.classes.filter(x=>x!==c)}));};
   return(<div style={{padding:'14px 14px 100px'}}><div style={{fontWeight:700,fontSize:18,marginBottom:12,color:C.text}}>👥 นักเรียน</div>
     <div style={{display:'flex',gap:6,marginBottom:12,background:'white',padding:5,borderRadius:10,border:`1px solid ${C.border}`}}><button onClick={()=>setSub('list')} style={{...sTab(sub==='list'),flex:1}}>👥 รายชื่อ</button><button onClick={()=>setSub('class')} style={{...sTab(sub==='class'),flex:1}}>🏫 ห้องเรียน</button></div>
-    {sub==='list'&&<><button onClick={openAdd} style={{...sBtn(true),width:'100%',marginBottom:10}}>+ เพิ่มนักเรียน</button>
-      <div style={sCard}><select value={cls} onChange={e=>setCls(e.target.value)} style={{...sInp,marginBottom:8,fontFamily:'inherit'}}><option value="">ทุกห้อง ({data.students.length} คน)</option>{sortedClasses.map(c=><option key={c} value={c}>{c} ({data.students.filter(s=>s.classId===c).length} คน)</option>)}</select><input placeholder="🔍 ชื่อ รหัส ชื่อเล่น ชื่อจีน..." value={search} onChange={e=>setSearch(e.target.value)} style={sInp}/></div>
+    {sub==='list'&&<><button onClick={openAdd} style={{...sBtn(true),width:'100%',marginBottom:10}}>+ เพิ่มนักเรียน</button><div style={sCard}><select value={cls} onChange={e=>setCls(e.target.value)} style={{...sInp,marginBottom:8,fontFamily:'inherit'}}><option value="">ทุกห้อง ({data.students.length} คน)</option>{sortedClasses.map(c=><option key={c} value={c}>{c} ({data.students.filter(s=>s.classId===c).length} คน)</option>)}</select><input placeholder="🔍 ชื่อ รหัส ชื่อเล่น ชื่อจีน..." value={search} onChange={e=>setSearch(e.target.value)} style={sInp}/></div>
       {students.map(stu=><div key={stu.id} style={{...sCard,marginBottom:6,padding:'12px 14px'}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div style={{flex:1,minWidth:0}}><div style={{fontWeight:600,fontSize:15}}>{stu.number?<span style={{color:C.muted,fontSize:13,marginRight:6}}>{stu.number}.</span>:null}{stu.name}{stu.nickname&&<span style={{color:C.red,fontSize:13,marginLeft:4}}>({stu.nickname})</span>}{stu.chineseName&&<span style={{fontSize:13,color:'#0891b2',marginLeft:4}}>{stu.chineseName}</span>}</div><div style={{fontSize:12,color:C.muted}}>{stu.id} · {stu.classId}</div></div><div style={{display:'flex',gap:4}}><button onClick={()=>resetPin(stu)} style={{...sBtn(false,true),padding:'6px 8px'}}>🔑</button><button onClick={()=>{setForm({...stu,number:stu.number||''});setErr('');setModal('edit');}} style={{...sBtn(false,true),padding:'6px 10px'}}>แก้ไข</button><button onClick={()=>del(stu.id,stu.name)} style={{...sBtn(false,true),color:'#dc2626',padding:'6px 10px'}}>ลบ</button></div></div></div>)}
       {!students.length&&<div style={{textAlign:'center',color:C.muted,padding:40}}>ไม่พบนักเรียน</div>}</>}
     {sub==='class'&&<><div style={{display:'flex',justifyContent:'space-between',marginBottom:10}}><div style={{fontSize:13,color:C.muted}}>ประจำชั้น <b style={{color:C.red}}>{data.homeroom}</b></div><button onClick={()=>{setClsForm({name:'',oldName:''});setClsModal('add');}} style={sBtn(true,true)}>+ เพิ่มห้อง</button></div>
       {sortedClasses.map(c=>{const ct=data.students.filter(s=>s.classId===c).length;return(<div key={c} style={{...sCard,marginBottom:6,padding:'12px 14px',display:'flex',justifyContent:'space-between',alignItems:'center',borderLeft:c===data.homeroom?`4px solid ${C.red}`:`1px solid ${C.border}`}}><div><div style={{fontWeight:700,fontSize:15}}>{c} {c===data.homeroom&&<span style={{fontSize:11,color:C.red}}>★</span>}</div><div style={{fontSize:12,color:C.muted}}>{ct} คน</div></div><div style={{display:'flex',gap:5}}><button onClick={()=>{setClsForm({name:c,oldName:c});setClsModal('edit');}} style={sBtn(false,true)}>แก้ไข</button><button onClick={()=>delClass(c)} disabled={ct>0} style={{...sBtn(false,true),color:ct?'#aaa':'#dc2626',cursor:ct?'not-allowed':'pointer'}}>ลบ</button></div></div>);})}</>}
     <Sheet open={!!modal} title={modal==='add'?'➕ เพิ่มนักเรียน':'✏️ แก้ไขข้อมูล'} onClose={()=>setModal(null)}>
-      <div style={{display:'grid',gridTemplateColumns:'80px 1fr',gap:8,marginBottom:8}}>
-        <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>เลขที่</div><input type="number" value={form.number||''} onChange={e=>setForm(p=>({...p,number:e.target.value}))} style={sInp} placeholder="-"/></div>
-        <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>รหัสนักเรียน *</div><input value={form.id||''} onChange={e=>setForm(p=>({...p,id:e.target.value}))} disabled={modal==='edit'} style={{...sInp,opacity:modal==='edit'?0.6:1}} placeholder="เช่น 12345"/></div></div>
-      <div style={{fontSize:12,color:C.muted,marginBottom:4}}>ชื่อ-สกุล (ภาษาไทย) *</div><input value={form.name||''} onChange={e=>setForm(p=>({...p,name:e.target.value}))} style={{...sInp,marginBottom:8}} placeholder="ชื่อ-สกุล"/>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
-        <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ชื่อเล่น</div><input value={form.nickname||''} onChange={e=>setForm(p=>({...p,nickname:e.target.value}))} style={sInp}/></div>
-        <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ชื่อภาษาจีน</div><input value={form.chineseName||''} onChange={e=>setForm(p=>({...p,chineseName:e.target.value}))} style={sInp} placeholder="小名"/></div></div>
-      <div style={{fontSize:12,color:C.muted,marginBottom:4}}>ห้องเรียน *</div><select value={form.classId||''} onChange={e=>setForm(p=>({...p,classId:e.target.value}))} style={{...sInp,marginBottom:8,fontFamily:'inherit'}}><option value="">-- เลือก --</option>{sortedClasses.map(c=><option key={c} value={c}>{c}</option>)}</select>
-      <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}><span style={{fontSize:12,color:C.muted}}>PIN 4 หลัก *</span><button onClick={()=>setForm(p=>({...p,pin:randomPin()}))} style={{fontSize:11,color:C.red,background:'none',border:'none',cursor:'pointer',fontFamily:'inherit'}}>🎲 สุ่ม</button></div>
-      <input value={form.pin||''} maxLength={4} onChange={e=>setForm(p=>({...p,pin:e.target.value.replace(/\D/g,'').slice(0,4)}))} style={{...sInp,marginBottom:14,fontSize:18,letterSpacing:6,textAlign:'center',fontWeight:700}}/>
-      {err&&<div style={{color:C.red,fontSize:13,marginBottom:10,padding:'6px 10px',background:'#fff0f0',borderRadius:6}}>{err}</div>}
-      <div style={{display:'flex',gap:8}}><button onClick={()=>setModal(null)} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={save} style={{...sBtn(true),flex:1}}>บันทึก</button></div></Sheet>
-    <Sheet open={!!clsModal} title={clsModal==='add'?'➕ เพิ่มห้อง':'✏️ แก้ไข'} onClose={()=>setClsModal(null)}><input value={clsForm.name} onChange={e=>setClsForm(p=>({...p,name:e.target.value}))} style={{...sInp,marginBottom:14}} placeholder="เช่น ม.1/4" autoFocus/><div style={{display:'flex',gap:8}}><button onClick={()=>setClsModal(null)} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={saveClass} style={{...sBtn(true),flex:1}}>บันทึก</button></div></Sheet>
-  </div>);}
+      <div style={{display:'grid',gridTemplateColumns:'80px 1fr',gap:8,marginBottom:8}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>เลขที่</div><input type="number" value={form.number||''} onChange={e=>setForm(p=>({...p,number:e.target.value}))} style={sInp} placeholder="-"/></div><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>รหัสนักเรียน *</div><input value={form.id||''} onChange={e=>setForm(p=>({...p,id:e.target.value}))} disabled={modal==='edit'} style={{...sInp,opacity:modal==='edit'?0.6:1}} placeholder="เช่น 12345"/></div></div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ชื่อ-สกุล (ภาษาไทย) *</div><input value={form.name||''} onChange={e=>setForm(p=>({...p,name:e.target.value}))} style={{...sInp,marginBottom:8}} placeholder="ชื่อ-สกุล"/>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ชื่อเล่น</div><input value={form.nickname||''} onChange={e=>setForm(p=>({...p,nickname:e.target.value}))} style={sInp}/></div><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ชื่อภาษาจีน</div><input value={form.chineseName||''} onChange={e=>setForm(p=>({...p,chineseName:e.target.value}))} style={sInp} placeholder="小名"/></div></div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ห้องเรียน *</div><select value={form.classId||''} onChange={e=>setForm(p=>({...p,classId:e.target.value}))} style={{...sInp,marginBottom:8,fontFamily:'inherit'}}><option value="">-- เลือก --</option>{sortedClasses.map(c=><option key={c} value={c}>{c}</option>)}</select>
+      <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}><span style={{fontSize:12,color:C.muted}}>PIN 4 หลัก *</span><button onClick={()=>setForm(p=>({...p,pin:randomPin()}))} style={{fontSize:11,color:C.red,background:'none',border:'none',cursor:'pointer',fontFamily:'inherit'}}>🎲 สุ่ม</button></div><input value={form.pin||''} maxLength={4} onChange={e=>setForm(p=>({...p,pin:e.target.value.replace(/\D/g,'').slice(0,4)}))} style={{...sInp,marginBottom:14,fontSize:18,letterSpacing:6,textAlign:'center',fontWeight:700}}/>
+      {err&&<div style={{color:C.red,fontSize:13,marginBottom:10,padding:'6px 10px',background:'#fff0f0',borderRadius:6}}>{err}</div>}<div style={{display:'flex',gap:8}}><button onClick={()=>setModal(null)} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={save} style={{...sBtn(true),flex:1}}>บันทึก</button></div></Sheet>
+    <Sheet open={!!clsModal} title={clsModal==='add'?'➕ เพิ่มห้อง':'✏️ แก้ไข'} onClose={()=>setClsModal(null)}><input value={clsForm.name} onChange={e=>setClsForm(p=>({...p,name:e.target.value}))} style={{...sInp,marginBottom:14}} placeholder="เช่น ม.1/4" autoFocus/><div style={{display:'flex',gap:8}}><button onClick={()=>setClsModal(null)} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={saveClass} style={{...sBtn(true),flex:1}}>บันทึก</button></div></Sheet></div>);}
 
-// ===== STATS (multi-subject) =====
+// ===== STATS =====
 function StatsPage({data}){const[sub,setSub]=useState('morning');const[cls,setCls]=useState('');const[range,setRange]=useState('term');const[statSubjId,setStatSubjId]=useState(data.subjects[0]?.id||'');
   const classesHave=sortClasses(data.classes.filter(c=>data.students.some(s=>s.classId===c)));const students=cls?data.students.filter(s=>s.classId===cls):data.students;
   const filteredAtt=useMemo(()=>data.attendance.filter(a=>dateInRange(a.date,range)),[data.attendance,range]);
@@ -421,196 +602,187 @@ function StatsPage({data}){const[sub,setSub]=useState('morning');const[cls,setCl
       {scoreStats.map(({stu,tot,mx,has,grade})=><div key={stu.id} style={{...sCard,marginBottom:8,padding:'12px 14px'}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:has?6:0}}><div><span style={{fontWeight:600,fontSize:14}}>{stu.nickname||stu.name}</span><span style={{fontSize:12,color:C.muted,marginLeft:6}}>{stu.classId}</span></div><div style={{display:'flex',alignItems:'center',gap:8}}>{has&&<span style={{fontSize:14,fontWeight:600}}>{tot}/{mx}</span>}{grade&&<span style={{fontWeight:700,fontSize:13,padding:'3px 10px',borderRadius:8,background:gradeBg(grade),color:gradeColor(grade)}}>{grade.label}</span>}{!has&&<span style={{fontSize:12,color:C.muted}}>-</span>}</div></div>{has&&mx>0&&<div style={{height:6,borderRadius:3,background:'#f3f4f6',overflow:'hidden'}}><div style={{height:'100%',width:`${(tot/mx)*100}%`,background:gradeColor(grade),borderRadius:3}}/></div>}</div>)}</>}
   </div>);}
 
-// ===== IMPORT/EXPORT (Excel only, with preview) =====
+// ===== IMPORT/EXPORT =====
 function IOPage({data,update,toast}){
   const fileRef=useRef(null);const[importPreview,setImportPreview]=useState(null);
   const[exportModal,setExportModal]=useState(false);
-  const[exportSections,setExportSections]=useState({students:true,scores:true,morningAtt:true,classAtt:true});
+  
+  // === เพิ่มสถานะสำหรับตัวเลือกใหม่ ===
+  const[exportSections,setExportSections]=useState({
+    students:true,
+    homeroomProfiles:false, 
+    savingsSummary:false,
+    scores:true,
+    morningAtt:true,
+    classAtt:true
+  });
+  
   const[exportSubjs,setExportSubjs]=useState(()=>Object.fromEntries(data.subjects.map(s=>[s.id,true])));
 
   const toggleSection=k=>setExportSections(p=>({...p,[k]:!p[k]}));
   const toggleSubj=id=>setExportSubjs(p=>({...p,[id]:!p[id]}));
 
   const doExport=async()=>{
-    try{const XLSX=await import('xlsx');const wb=XLSX.utils.book_new();
-      if(exportSections.students){const rows=data.students.sort((a,b)=>(a.number||999)-(b.number||999)).map(s=>({'เลขที่':s.number||'','รหัส':s.id,'ชื่อ-สกุล':s.name,'ชื่อเล่น':s.nickname||'','ชื่อภาษาจีน':s.chineseName||'','ห้อง':s.classId,'PIN':s.pin}));XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows.length?rows:[{}]),'นักเรียน');}
-      if(exportSections.morningAtt){const rows=data.attendance.filter(a=>a.type==='morning').sort((a,b)=>a.date.localeCompare(b.date)).map(a=>{const s=data.students.find(x=>x.id===a.studentId);return{'วันที่':a.date,'รหัส':a.studentId,'เลขที่':s?.number||'','ชื่อ':s?.name||'','ห้อง':s?.classId||'','สถานะ':STATUS[a.status]?.label||a.status,'หมายเหตุ':a.note||''};});XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows.length?rows:[{}]),'เข้าแถว');}
-      if(exportSections.classAtt){data.subjects.filter(s=>exportSubjs[s.id]).forEach(subj=>{const rows=data.attendance.filter(a=>a.type==='class'&&a.subjectId===subj.id).sort((a,b)=>a.date.localeCompare(b.date)).map(a=>{const s=data.students.find(x=>x.id===a.studentId);return{'วันที่':a.date,'คาบ':a.period||'','รหัส':a.studentId,'เลขที่':s?.number||'','ชื่อ':s?.name||'','ห้อง':s?.classId||'','สถานะ':STATUS[a.status]?.label||a.status,'คะแนน':a.customScore??''};});const shName=(`คาบ ${subj.code||subj.name}`).slice(0,31);XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows.length?rows:[{}]),shName);});}
-      if(exportSections.scores){data.subjects.filter(s=>exportSubjs[s.id]).forEach(subj=>{const sCats=data.categories.filter(c=>c.subjectId===subj.id);const rows=data.students.sort((a,b)=>(a.number||999)-(b.number||999)).map(s=>{const row={'เลขที่':s.number||'','รหัส':s.id,'ชื่อ':s.name,'ห้อง':s.classId};sCats.forEach(c=>{const k=`${c.name}(${getCatMax(c)})`;row[k]=getCatScore(s.id,c,data.scores,data.term,data.year)||'';});const mx=sCats.reduce((t,c)=>t+getCatMax(c),0);const tot=sCats.reduce((t,c)=>t+getCatScore(s.id,c,data.scores,data.term,data.year),0);const has=sCats.some(c=>hasCatScore(s.id,c,data.scores,data.term,data.year));row['รวม']=has?tot:'';row['เกรด']=has?(getSubjectGrade(s.id,subj,data.categories,data.scores,data.term,data.year,data.attendance,data.conduct)?.label||''):'' ;return row;});const shName=(`คะแนน ${subj.code||subj.name}`).slice(0,31);XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),[shName][0]);});}
-      XLSX.writeFile(wb,`chinese-class-${data.term}-${data.year}-${todayStr()}.xlsx`);setExportModal(false);toast('ส่งออก Excel สำเร็จ','success');
-    }catch(e){toast('ไม่สามารถส่งออก Excel ได้: '+e.message,'error');}};
+    try{
+      const XLSX=await import('xlsx');
+      const wb=XLSX.utils.book_new();
+      
+      // 1. นักเรียนทั้งหมด
+      if(exportSections.students){
+        const rows=data.students.sort((a,b)=>(a.number||999)-(b.number||999)).map(s=>({'เลขที่':s.number||'','รหัส':s.id,'ชื่อ-สกุล':s.name,'ชื่อเล่น':s.nickname||'','ชื่อภาษาจีน':s.chineseName||'','ห้อง':s.classId,'PIN':s.pin}));
+        XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows.length?rows:[{}]),'นักเรียนทั้งหมด');
+      }
+      
+      // 2. ข้อมูลส่วนตัวประจำชั้น
+      if(exportSections.homeroomProfiles){
+        const hrStudents = data.students.filter(s => s.classId === data.homeroom).sort((a,b)=>(a.number||999)-(b.number||999));
+        const rows = hrStudents.map(s => {
+            const p = data.profiles?.[s.id] || {};
+            return {
+                'เลขที่': s.number || '',
+                'รหัส': s.id,
+                'ชื่อ-สกุล': s.name,
+                'ชื่อผู้ปกครอง': p.parentName || '',
+                'เบอร์ติดต่อ': p.phone || '',
+                'ที่อยู่': p.address || '',
+                'หมายเหตุ/โรคประจำตัว': p.note || ''
+            };
+        });
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{}]), `ข้อมูลส่วนตัว ${data.homeroom}`);
+      }
+      
+      // 3. สรุปการออมเงินประจำชั้น
+      if(exportSections.savingsSummary){
+        const hrStudents = data.students.filter(s => s.classId === data.homeroom).sort((a,b)=>(a.number||999)-(b.number||999));
+        const rows = hrStudents.map(s => {
+            const txs = data.savings?.[s.id] || [];
+            const deposit = txs.filter(t => t.type === 'deposit').reduce((sum, t) => sum + t.amount, 0);
+            const withdraw = txs.filter(t => t.type === 'withdraw').reduce((sum, t) => sum + t.amount, 0);
+            const balance = deposit - withdraw;
+            return {
+                'เลขที่': s.number || '',
+                'รหัส': s.id,
+                'ชื่อ-สกุล': s.name,
+                'ยอดฝากรวม (บาท)': deposit,
+                'ยอดถอนรวม (บาท)': withdraw,
+                'ยอดคงเหลือ (บาท)': balance
+            };
+        });
+        
+        // เพิ่มแถวสรุปยอดรวมด้านล่างสุด
+        if (rows.length > 0) {
+             const totalDep = rows.reduce((s, r) => s + r['ยอดฝากรวม (บาท)'], 0);
+             const totalWd = rows.reduce((s, r) => s + r['ยอดถอนรวม (บาท)'], 0);
+             const totalBal = rows.reduce((s, r) => s + r['ยอดคงเหลือ (บาท)'], 0);
+             rows.push({
+                 'เลขที่': 'รวมทั้งหมด',
+                 'รหัส': '',
+                 'ชื่อ-สกุล': '',
+                 'ยอดฝากรวม (บาท)': totalDep,
+                 'ยอดถอนรวม (บาท)': totalWd,
+                 'ยอดคงเหลือ (บาท)': totalBal
+             });
+        }
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{}]), `สรุปออมเงิน ${data.homeroom}`);
+      }
+      
+      // 4. เข้าแถว
+      if(exportSections.morningAtt){
+        const rows=data.attendance.filter(a=>a.type==='morning').sort((a,b)=>a.date.localeCompare(b.date)).map(a=>{const s=data.students.find(x=>x.id===a.studentId);return{'วันที่':a.date,'รหัส':a.studentId,'เลขที่':s?.number||'','ชื่อ':s?.name||'','ห้อง':s?.classId||'','สถานะ':STATUS[a.status]?.label||a.status,'หมายเหตุ':a.note||''};});
+        XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows.length?rows:[{}]),'เข้าแถว');
+      }
+      
+      // 5. คาบเรียน
+      if(exportSections.classAtt){
+        data.subjects.filter(s=>exportSubjs[s.id]).forEach(subj=>{const rows=data.attendance.filter(a=>a.type==='class'&&a.subjectId===subj.id).sort((a,b)=>a.date.localeCompare(b.date)).map(a=>{const s=data.students.find(x=>x.id===a.studentId);return{'วันที่':a.date,'คาบ':a.period||'','รหัส':a.studentId,'เลขที่':s?.number||'','ชื่อ':s?.name||'','ห้อง':s?.classId||'','สถานะ':STATUS[a.status]?.label||a.status,'คะแนน':a.customScore??''};});const shName=(`คาบ ${subj.code||subj.name}`).slice(0,31);XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows.length?rows:[{}]),shName);});
+      }
+      
+      // 6. คะแนน
+      if(exportSections.scores){
+        data.subjects.filter(s=>exportSubjs[s.id]).forEach(subj=>{const sCats=data.categories.filter(c=>c.subjectId===subj.id);const rows=data.students.sort((a,b)=>(a.number||999)-(b.number||999)).map(s=>{const row={'เลขที่':s.number||'','รหัส':s.id,'ชื่อ':s.name,'ห้อง':s.classId};sCats.forEach(c=>{const k=`${c.name}(${getCatMax(c)})`;row[k]=getCatScore(s.id,c,data.scores,data.term,data.year)||'';});const mx=sCats.reduce((t,c)=>t+getCatMax(c),0);const tot=sCats.reduce((t,c)=>t+getCatScore(s.id,c,data.scores,data.term,data.year),0);const has=sCats.some(c=>hasCatScore(s.id,c,data.scores,data.term,data.year));row['รวม']=has?tot:'';row['เกรด']=has?(getSubjectGrade(s.id,subj,data.categories,data.scores,data.term,data.year,data.attendance,data.conduct)?.label||''):'' ;return row;});const shName=(`คะแนน ${subj.code||subj.name}`).slice(0,31);XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),[shName][0]);});
+      }
+      
+      XLSX.writeFile(wb,`chinese-class-${data.term}-${data.year}-${todayStr()}.xlsx`);
+      setExportModal(false);
+      toast('ส่งออก Excel สำเร็จ','success');
+    }catch(e){toast('ไม่สามารถส่งออก Excel ได้: '+e.message,'error');}
+  };
 
   const downloadTemplate=async()=>{try{const XLSX=await import('xlsx');const wb=XLSX.utils.book_new();const sample=[{'เลขที่':1,'รหัสนักเรียน':'12345','ชื่อ-สกุล':'ตัวอย่าง ทดสอบ','ชื่อเล่น':'ตัว','ชื่อภาษาจีน':'小明','ห้อง':'ม.5/2','PIN':'1234'},{'เลขที่':2,'รหัสนักเรียน':'12346','ชื่อ-สกุล':'ตัวอย่าง 2','ชื่อเล่น':'','ชื่อภาษาจีน':'','ห้อง':'ม.5/2','PIN':'5678'}];XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(sample),'นักเรียน');XLSX.writeFile(wb,'template-นักเรียน.xlsx');toast('ดาวน์โหลด Template แล้ว','success');}catch{toast('ไม่พร้อมใช้งาน','error');}};
-
-  const handleFile=async e=>{const f=e.target.files[0];if(!f)return;
-    try{const XLSX=await import('xlsx');const wb=XLSX.read(await f.arrayBuffer());const ws=wb.Sheets[wb.SheetNames.find(n=>n.includes('นักเรียน'))||wb.SheetNames[0]];
-      const rows=XLSX.utils.sheet_to_json(ws).map(r=>({id:String(r['รหัสนักเรียน']||r['รหัส']||'').trim(),name:String(r['ชื่อ-สกุล']||r['ชื่อ']||'').trim(),nickname:String(r['ชื่อเล่น']||'').trim(),chineseName:String(r['ชื่อภาษาจีน']||'').trim(),number:parseInt(r['เลขที่'])||null,classId:String(r['ห้อง']||'').trim(),pin:String(r['PIN']||'').trim()||randomPin()})).filter(s=>s.id&&s.name&&s.classId);
-      if(!rows.length)return toast('ไม่พบข้อมูล ตรวจสอบหัวคอลัมน์','error');setImportPreview(rows);
-    }catch(ex){toast('อ่านไฟล์ไม่ได้: '+ex.message,'error');}e.target.value='';};
+  const handleFile=async e=>{const f=e.target.files[0];if(!f)return;try{const XLSX=await import('xlsx');const wb=XLSX.read(await f.arrayBuffer());const ws=wb.Sheets[wb.SheetNames.find(n=>n.includes('นักเรียน'))||wb.SheetNames[0]];const rows=XLSX.utils.sheet_to_json(ws).map(r=>({id:String(r['รหัสนักเรียน']||r['รหัส']||'').trim(),name:String(r['ชื่อ-สกุล']||r['ชื่อ']||'').trim(),nickname:String(r['ชื่อเล่น']||'').trim(),chineseName:String(r['ชื่อภาษาจีน']||'').trim(),number:parseInt(r['เลขที่'])||null,classId:String(r['ห้อง']||'').trim(),pin:String(r['PIN']||'').trim()||randomPin()})).filter(s=>s.id&&s.name&&s.classId);if(!rows.length)return toast('ไม่พบข้อมูล ตรวจสอบหัวคอลัมน์','error');setImportPreview(rows);}catch(ex){toast('อ่านไฟล์ไม่ได้: '+ex.message,'error');}e.target.value='';};
   const confirmImport=mode=>{if(!importPreview)return;update(prev=>{const ex=new Map(prev.students.map(s=>[s.id,s]));const nc=new Set(prev.classes);importPreview.forEach(s=>{const pin=/^\d{4}$/.test(s.pin)?s.pin:randomPin();if(ex.has(s.id)){if(mode==='replace')ex.set(s.id,{...ex.get(s.id),...s,pin});}else ex.set(s.id,{...s,pin});if(s.classId&&!nc.has(s.classId))nc.add(s.classId);});return{...prev,students:Array.from(ex.values()),classes:sortClasses(Array.from(nc))};});toast(`นำเข้า ${importPreview.length} รายการ ✓`,'success');setImportPreview(null);};
 
-  const exportCounts={students:data.students.length,morningAtt:data.attendance.filter(a=>a.type==='morning').length,classAtt:data.attendance.filter(a=>a.type==='class').length,scores:data.scores.length};
+  // === คำนวณจำนวนเพื่อแสดงใน Modal ===
+  const hrCount = data.students.filter(s => s.classId === data.homeroom).length;
+  const exportCounts={
+    students:data.students.length,
+    homeroom:hrCount,
+    morningAtt:data.attendance.filter(a=>a.type==='morning').length,
+    classAtt:data.attendance.filter(a=>a.type==='class').length,
+    scores:data.scores.length
+  };
 
   return(<div style={{padding:'14px 14px 100px'}}><div style={{fontWeight:700,fontSize:18,marginBottom:12,color:C.text}}>📥 นำเข้า / ส่งออก</div>
     <div style={sCard}><div style={{fontWeight:700,fontSize:15,marginBottom:6}}>📤 ส่งออก Excel</div><div style={{fontSize:13,color:C.muted,marginBottom:12}}>เลือกหัวข้อที่ต้องการส่งออก</div><button onClick={()=>setExportModal(true)} style={{...sBtn(true),width:'100%',padding:12}}>📊 เลือกและส่งออก...</button></div>
-    <div style={sCard}><div style={{fontWeight:700,fontSize:15,marginBottom:6}}>📥 นำเข้านักเรียน</div><div style={{fontSize:13,color:C.muted,marginBottom:10}}>Excel คอลัมน์: เลขที่, รหัสนักเรียน, ชื่อ-สกุล, ชื่อเล่น, ชื่อภาษาจีน, ห้อง, PIN</div><button onClick={downloadTemplate} style={{...sBtn(false),width:'100%',padding:10,marginBottom:8}}>⬇ ดาวน์โหลด Template</button>
-      <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFile} style={{display:'none'}}/><button onClick={()=>fileRef.current?.click()} style={{...sBtn(true),width:'100%',padding:12}}>📤 เลือกไฟล์ Excel</button></div>
+    <div style={sCard}><div style={{fontWeight:700,fontSize:15,marginBottom:6}}>📥 นำเข้านักเรียน</div><div style={{fontSize:13,color:C.muted,marginBottom:10}}>Excel คอลัมน์: เลขที่, รหัสนักเรียน, ชื่อ-สกุล, ชื่อเล่น, ชื่อภาษาจีน, ห้อง, PIN</div><button onClick={downloadTemplate} style={{...sBtn(false),width:'100%',padding:10,marginBottom:8}}>⬇ ดาวน์โหลด Template</button><input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFile} style={{display:'none'}}/><button onClick={()=>fileRef.current?.click()} style={{...sBtn(true),width:'100%',padding:12}}>📤 เลือกไฟล์ Excel</button></div>
 
-    {/* Export modal */}
     <Sheet open={exportModal} title="📤 เลือกหัวข้อที่จะส่งออก" onClose={()=>setExportModal(false)}>
       <div style={{marginBottom:14}}>
-        {[['students',`นักเรียน (${exportCounts.students} คน)`],['morningAtt',`เช็คชื่อเข้าแถว (${exportCounts.morningAtt} รายการ)`],['classAtt',`เช็คชื่อคาบเรียน (${exportCounts.classAtt} รายการ)`],['scores',`คะแนน (${exportCounts.scores} รายการ)`]].map(([k,l])=><label key={k} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 0',borderBottom:`1px solid ${C.border}`,cursor:'pointer'}}><input type="checkbox" checked={exportSections[k]} onChange={()=>toggleSection(k)} style={{width:18,height:18,accentColor:C.red}}/><span style={{fontSize:15}}>{l}</span></label>)}</div>
+        {[
+          ['students',`รายชื่อนักเรียนทั้งหมด (${exportCounts.students} คน)`],
+          ['homeroomProfiles',`ข้อมูลส่วนตัวประจำชั้น ${data.homeroom} (${exportCounts.homeroom} คน)`],
+          ['savingsSummary',`สรุปการออมเงินประจำชั้น ${data.homeroom} (${exportCounts.homeroom} คน)`],
+          ['morningAtt',`เช็คชื่อเข้าแถว (${exportCounts.morningAtt} รายการ)`],
+          ['classAtt',`เช็คชื่อคาบเรียน (${exportCounts.classAtt} รายการ)`],
+          ['scores',`คะแนนวิชาต่างๆ (${exportCounts.scores} รายการ)`]
+        ].map(([k,l])=><label key={k} style={{display:'flex',alignItems:'center',gap:10,padding:'10px 0',borderBottom:`1px solid ${C.border}`,cursor:'pointer'}}><input type="checkbox" checked={exportSections[k]} onChange={()=>toggleSection(k)} style={{width:18,height:18,accentColor:C.red}}/><span style={{fontSize:15}}>{l}</span></label>)}</div>
       {(exportSections.classAtt||exportSections.scores)&&<div style={{marginBottom:14}}><div style={{fontSize:13,color:C.muted,marginBottom:8,fontWeight:600}}>เลือกรายวิชา:</div>{data.subjects.map(s=><label key={s.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 0',borderBottom:`1px solid ${C.border}`,cursor:'pointer'}}><input type="checkbox" checked={exportSubjs[s.id]??true} onChange={()=>toggleSubj(s.id)} style={{width:16,height:16,accentColor:C.red}}/><div><div style={{fontSize:14,fontWeight:600}}>{s.code&&`${s.code} `}{s.name}</div><div style={{fontSize:11,color:C.muted}}>คะแนน {data.scores.filter(r=>data.categories.find(c=>c.id===r.categoryId&&c.subjectId===s.id)).length} รายการ</div></div></label>)}</div>}
       <div style={{background:C.light,borderRadius:8,padding:'10px 12px',marginBottom:14,fontSize:13,color:C.muted}}>จะสร้างไฟล์: <b style={{color:C.text}}>chinese-class-{data.term}-{data.year}-{todayStr()}.xlsx</b></div>
       <div style={{display:'flex',gap:8}}><button onClick={()=>setExportModal(false)} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={doExport} style={{...sBtn(true),flex:1}}>📊 ส่งออก</button></div></Sheet>
 
-    {/* Import preview */}
     <Sheet open={!!importPreview} title={`ตรวจสอบก่อนนำเข้า (${importPreview?.length||0} รายการ)`} onClose={()=>setImportPreview(null)}>
-      {importPreview&&<div>
-        <div style={{maxHeight:'42vh',overflowY:'auto',marginBottom:14,border:`1px solid ${C.border}`,borderRadius:8}}>
-          <div style={{display:'grid',gridTemplateColumns:'40px 1fr 1fr 60px',background:C.light,padding:'6px 10px',fontSize:12,fontWeight:600,color:C.muted,borderBottom:`1px solid ${C.border}`}}><span>เลขที่</span><span>ชื่อ</span><span>ห้อง · รหัส</span><span>สถานะ</span></div>
-          {importPreview.map((s,i)=>{const exists=data.students.some(x=>x.id===s.id);return(<div key={i} style={{display:'grid',gridTemplateColumns:'40px 1fr 1fr 60px',padding:'8px 10px',borderBottom:`1px solid ${C.border}`,fontSize:13,background:exists?'#fffbf0':'white'}}>
-            <span style={{color:C.muted}}>{s.number||'-'}</span>
-            <span><b>{s.name}</b>{s.nickname?` (${s.nickname})`:''}{s.chineseName?<span style={{color:'#0891b2'}}> {s.chineseName}</span>:null}</span>
-            <span style={{color:C.muted}}>{s.classId} · {s.id}</span>
-            <span style={{color:exists?'#d97706':'#16a34a',fontSize:11,fontWeight:600}}>{exists?'มีอยู่แล้ว':'ใหม่'}</span></div>);})}</div>
-        <div style={{display:'flex',gap:8,flexDirection:'column'}}>
-          <button onClick={()=>confirmImport('skip')} style={{...sBtn(true),padding:12}}>เพิ่มเฉพาะรายใหม่ ({importPreview.filter(s=>!data.students.some(x=>x.id===s.id)).length} คน)</button>
-          <button onClick={()=>confirmImport('replace')} style={{...sBtn(false),padding:12}}>เพิ่ม + อัปเดตที่มีอยู่ ({importPreview.length} คน)</button>
-          <button onClick={()=>setImportPreview(null)} style={{...sBtn(false),padding:10,color:C.muted}}>ยกเลิก</button></div></div>}</Sheet>
+      {importPreview&&<div><div style={{maxHeight:'42vh',overflowY:'auto',marginBottom:14,border:`1px solid ${C.border}`,borderRadius:8}}><div style={{display:'grid',gridTemplateColumns:'40px 1fr 1fr 60px',background:C.light,padding:'6px 10px',fontSize:12,fontWeight:600,color:C.muted,borderBottom:`1px solid ${C.border}`}}><span>เลขที่</span><span>ชื่อ</span><span>ห้อง · รหัส</span><span>สถานะ</span></div>
+          {importPreview.map((s,i)=>{const exists=data.students.some(x=>x.id===s.id);return(<div key={i} style={{display:'grid',gridTemplateColumns:'40px 1fr 1fr 60px',padding:'8px 10px',borderBottom:`1px solid ${C.border}`,fontSize:13,background:exists?'#fffbf0':'white'}}><span style={{color:C.muted}}>{s.number||'-'}</span><span><b>{s.name}</b>{s.nickname?` (${s.nickname})`:''}{s.chineseName?<span style={{color:'#0891b2'}}> {s.chineseName}</span>:null}</span><span style={{color:C.muted}}>{s.classId} · {s.id}</span><span style={{color:exists?'#d97706':'#16a34a',fontSize:11,fontWeight:600}}>{exists?'มีอยู่แล้ว':'ใหม่'}</span></div>);})}</div>
+        <div style={{display:'flex',gap:8,flexDirection:'column'}}><button onClick={()=>confirmImport('skip')} style={{...sBtn(true),padding:12}}>เพิ่มเฉพาะรายใหม่ ({importPreview.filter(s=>!data.students.some(x=>x.id===s.id)).length} คน)</button><button onClick={()=>confirmImport('replace')} style={{...sBtn(false),padding:12}}>เพิ่ม + อัปเดตที่มีอยู่ ({importPreview.length} คน)</button><button onClick={()=>setImportPreview(null)} style={{...sBtn(false),padding:10,color:C.muted}}>ยกเลิก</button></div></div>}</Sheet>
   </div>);}
 
 // ===== SETTINGS =====
 function SettingsPage({data,update,toast}){
-  const[form,setForm]=useState({
-    appName:data.appName||'ห้องเรียนของคุณครูต้นฝน',
-    term:data.term,
-    year:data.year,
-    homeroom:data.homeroom,
-    teacherUsername:data.teacherUsername||'puntoy',
-    password:'',
-    presentScore:data.conduct.presentScore,
-    absentScore:data.conduct.absentScore,
-    lateGroup:data.conduct.lateGroup,
-    latePenalty:data.conduct.latePenalty,
-    minAttPct:data.conduct.minAttPct
-  });
-  
+  const[form,setForm]=useState({appName:data.appName||'ห้องเรียนของคุณครูต้นฝน',term:data.term,year:data.year,homeroom:data.homeroom,teacherUsername:data.teacherUsername||'puntoy',password:'',presentScore:data.conduct.presentScore,absentScore:data.conduct.absentScore,lateGroup:data.conduct.lateGroup,latePenalty:data.conduct.latePenalty,minAttPct:data.conduct.minAttPct});
   const sortedCls=useMemo(()=>sortClasses(data.classes),[data.classes]);
-  
-  const save=()=>{
-    update(prev=>({
-      ...prev,
-      appName:form.appName.trim()||prev.appName,
-      term:parseInt(form.term)||prev.term,
-      year:parseInt(form.year)||prev.year,
-      homeroom:form.homeroom,
-      teacherUsername:form.teacherUsername.trim()||'puntoy',
-      password:form.password.trim()||prev.password,
-      conduct:{
-        presentScore:parseFloat(form.presentScore)||0,
-        absentScore:parseFloat(form.absentScore)||0,
-        lateGroup:parseInt(form.lateGroup)||3,
-        latePenalty:parseFloat(form.latePenalty)||0,
-        minAttPct:parseInt(form.minAttPct)||20
-      }
-    }));
-    toast('บันทึกการตั้งค่าแล้ว','success');
-    setForm(p=>({...p,password:''}));
-  };
-  
+  const save=()=>{update(prev=>({...prev,appName:form.appName.trim()||prev.appName,term:parseInt(form.term)||prev.term,year:parseInt(form.year)||prev.year,homeroom:form.homeroom,teacherUsername:form.teacherUsername.trim()||'puntoy',password:form.password.trim()||prev.password,conduct:{presentScore:parseFloat(form.presentScore)||0,absentScore:parseFloat(form.absentScore)||0,lateGroup:parseInt(form.lateGroup)||3,latePenalty:parseFloat(form.latePenalty)||0,minAttPct:parseInt(form.minAttPct)||20}}));toast('บันทึกการตั้งค่าแล้ว','success');setForm(p=>({...p,password:''}));};
   const wipe=()=>{if(!window.confirm('ล้างข้อมูลทั้งหมด?'))return;if(!window.confirm('ยืนยัน?'))return;update(()=>initData());toast('ล้างข้อมูลแล้ว','success');};
-  
-  return(
-    <div style={{padding:'14px 14px 100px'}}>
-      <div style={{fontWeight:700,fontSize:18,marginBottom:12,color:C.text}}>⚙️ ตั้งค่า</div>
+  return(<div style={{padding:'14px 14px 100px'}}><div style={{fontWeight:700,fontSize:18,marginBottom:12,color:C.text}}>⚙️ ตั้งค่า</div>
       <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:8}}>🏫 ชื่อแอปพลิเคชัน</div><input value={form.appName} onChange={e=>setForm(p=>({...p,appName:e.target.value}))} style={sInp}/></div>
-      <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:10}}>📅 ภาคเรียน</div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ภาคเรียน</div><select value={form.term} onChange={e=>setForm(p=>({...p,term:e.target.value}))} style={sInp}><option value={1}>1</option><option value={2}>2</option></select></div><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ปี (พ.ศ.)</div><input type="number" value={form.year} onChange={e=>setForm(p=>({...p,year:e.target.value}))} style={sInp}/></div></div>
-        <div style={{fontSize:12,color:C.muted,marginBottom:4}}>ห้องประจำชั้น</div><select value={form.homeroom} onChange={e=>setForm(p=>({...p,homeroom:e.target.value}))} style={{...sInp,fontFamily:'inherit'}}>{sortedCls.map(c=><option key={c} value={c}>{c}</option>)}</select></div>
+      <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:10}}>📅 ภาคเรียน</div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ภาคเรียน</div><select value={form.term} onChange={e=>setForm(p=>({...p,term:e.target.value}))} style={sInp}><option value={1}>1</option><option value={2}>2</option></select></div><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ปี (พ.ศ.)</div><input type="number" value={form.year} onChange={e=>setForm(p=>({...p,year:e.target.value}))} style={sInp}/></div></div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ห้องประจำชั้น</div><select value={form.homeroom} onChange={e=>setForm(p=>({...p,homeroom:e.target.value}))} style={{...sInp,fontFamily:'inherit'}}>{sortedCls.map(c=><option key={c} value={c}>{c}</option>)}</select></div>
       <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:4}}>🎯 จิตพิสัย (คาบเรียน)</div><div style={{fontSize:12,color:C.muted,marginBottom:10}}>ลา/กิจกรรม: +มา · -ขาด · 0=สาย</div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>มา (+)</div><input type="number" step="0.5" value={form.presentScore} onChange={e=>setForm(p=>({...p,presentScore:e.target.value}))} style={sInp}/></div><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ขาด (-)</div><input type="number" step="0.5" value={form.absentScore} onChange={e=>setForm(p=>({...p,absentScore:e.target.value}))} style={sInp}/></div></div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>สาย ทุก N</div><input type="number" value={form.lateGroup} onChange={e=>setForm(p=>({...p,lateGroup:e.target.value}))} style={sInp}/></div><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>หัก</div><input type="number" step="0.5" value={form.latePenalty} onChange={e=>setForm(p=>({...p,latePenalty:e.target.value}))} style={sInp}/></div></div></div>
       <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:8}}>🚨 มส. (เข้าเรียนต่ำกว่า %)</div><input type="number" value={form.minAttPct} onChange={e=>setForm(p=>({...p,minAttPct:e.target.value}))} style={sInp}/></div>
-      
-      <div style={sCard}>
-        <div style={{fontWeight:700,fontSize:14,marginBottom:8}}>🔐 บัญชีครูผู้สอน</div>
-        <div style={{fontSize:12,color:C.muted,marginBottom:4}}>ชื่อผู้ใช้ (Username)</div>
-        <input value={form.teacherUsername} onChange={e=>setForm(p=>({...p,teacherUsername:e.target.value}))} style={{...sInp,marginBottom:10}} placeholder="เช่น puntoy"/>
-        <div style={{fontSize:12,color:C.muted,marginBottom:4}}>รหัสผ่านใหม่ (ทิ้งว่างถ้าไม่ต้องการเปลี่ยน)</div>
-        <input type="password" value={form.password} onChange={e=>setForm(p=>({...p,password:e.target.value}))} style={sInp} placeholder="เว้นว่าง = ไม่เปลี่ยน"/>
-      </div>
-      
-      <button onClick={save} style={{...sBtn(true),width:'100%',padding:14,fontSize:16,marginBottom:12}}>💾 บันทึกการตั้งค่า</button>
-      <button onClick={wipe} style={{width:'100%',padding:10,background:'#fff5f5',color:'#dc2626',border:'1px solid #fecaca',borderRadius:8,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>🗑 ล้างข้อมูลทั้งหมด</button>
-    </div>
-  );
-}
+      <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:8}}>🔐 บัญชีครูผู้สอน</div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ชื่อผู้ใช้ (Username)</div><input value={form.teacherUsername} onChange={e=>setForm(p=>({...p,teacherUsername:e.target.value}))} style={{...sInp,marginBottom:10}} placeholder="เช่น puntoy"/><div style={{fontSize:12,color:C.muted,marginBottom:4}}>รหัสผ่านใหม่ (ทิ้งว่างถ้าไม่ต้องการเปลี่ยน)</div><input type="password" value={form.password} onChange={e=>setForm(p=>({...p,password:e.target.value}))} style={sInp} placeholder="เว้นว่าง = ไม่เปลี่ยน"/></div>
+      <button onClick={save} style={{...sBtn(true),width:'100%',padding:14,fontSize:16,marginBottom:12}}>💾 บันทึกการตั้งค่า</button><button onClick={wipe} style={{width:'100%',padding:10,background:'#fff5f5',color:'#dc2626',border:'1px solid #fecaca',borderRadius:8,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>🗑 ล้างข้อมูลทั้งหมด</button></div>);}
 
 // ===== STUDENT APP =====
 function StudentApp({data,update,student,onLogout}){
   const[tab,setTab]=useState('scores');
-  
-  // คัดกรองเฉพาะวิชาที่นักเรียนเรียน (มีข้อมูลการเข้าเรียนของห้องตัวเอง หรือ มีการให้คะแนนของห้องตัวเอง)
-  const enrolledSubjects = useMemo(() => {
-    return data.subjects.filter(subj => {
-      const hasAtt = data.attendance.some(a => a.type === 'class' && a.subjectId === subj.id && data.students.find(s=>s.id===a.studentId)?.classId === student.classId);
-      const hasScore = data.categories.some(c => c.subjectId === subj.id && data.scores.some(s => s.categoryId === c.id && data.students.find(x=>x.id===s.studentId)?.classId === student.classId));
-      return hasAtt || hasScore;
-    });
-  }, [data, student]);
-
-  const[selSubjId,setSelSubjId]=useState(enrolledSubjects[0]?.id||'');
-  const[pinModal,setPinModal]=useState(false);const[pf,setPf]=useState({cur:'',n1:'',n2:''});const[pinErr,setPinErr]=useState('');
-  
-  useEffect(() => {
-    if (enrolledSubjects.length > 0 && !enrolledSubjects.find(s => s.id === selSubjId)) {
-      setSelSubjId(enrolledSubjects[0].id);
-    }
-  }, [enrolledSubjects, selSubjId]);
-
+  const enrolledSubjects = useMemo(() => {return data.subjects.filter(subj => {const hasAtt = data.attendance.some(a => a.type === 'class' && a.subjectId === subj.id && data.students.find(s=>s.id===a.studentId)?.classId === student.classId);const hasScore = data.categories.some(c => c.subjectId === subj.id && data.scores.some(s => s.categoryId === c.id && data.students.find(x=>x.id===s.studentId)?.classId === student.classId));return hasAtt || hasScore;});}, [data, student]);
+  const[selSubjId,setSelSubjId]=useState(enrolledSubjects[0]?.id||'');const[pinModal,setPinModal]=useState(false);const[pf,setPf]=useState({cur:'',n1:'',n2:''});const[pinErr,setPinErr]=useState('');
+  useEffect(() => {if (enrolledSubjects.length > 0 && !enrolledSubjects.find(s => s.id === selSubjId)) {setSelSubjId(enrolledSubjects[0].id);}}, [enrolledSubjects, selSubjId]);
   if(!student)return<div style={{padding:40,textAlign:'center',color:C.red}}>ไม่พบข้อมูล</div>; const isHomeroom = student.classId === data.homeroom;
   const subj=enrolledSubjects.find(s=>s.id===selSubjId);const cats=subj?data.categories.filter(c=>c.subjectId===subj.id):[];const mx=cats.reduce((s,c)=>s+getCatMax(c),0);const tot=cats.reduce((s,c)=>s+getCatScore(student.id,c,data.scores,data.term,data.year),0);const hasAny=cats.some(c=>hasCatScore(student.id,c,data.scores,data.term,data.year));
   const attRate=calcAttRate(student.id,data.attendance,'class',subj?.id);const morningRate=calcAttRate(student.id,data.attendance,'morning');
   const grade=hasAny&&subj?getSubjectGrade(student.id,subj,data.categories,data.scores,data.term,data.year,data.attendance,data.conduct):null;const conduct=calcConduct(student.id,data.attendance,data.conduct,subj?.id);
   const myAtt=data.attendance.filter(a=>a.studentId===student.id).sort((a,b)=>b.date.localeCompare(a.date));
   const changePin=()=>{if(pf.cur!==student.pin)return setPinErr('PIN ไม่ถูก');if(!/^\d{4}$/.test(pf.n1))return setPinErr('ต้อง 4 หลัก');if(pf.n1!==pf.n2)return setPinErr('ไม่ตรงกัน');update(prev=>({...prev,students:prev.students.map(s=>s.id===student.id?{...s,pin:pf.n1}:s)}));setPinModal(false);setPf({cur:'',n1:'',n2:''});};
+  
   return(<div style={{minHeight:'100vh',background:C.bg}}><div style={{background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',padding:'14px 16px'}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:700,fontSize:18}}>{student.nickname||student.name}{student.chineseName&&<span style={{fontSize:14,marginLeft:6,opacity:0.85}}>{student.chineseName}</span>}</div><div style={{fontSize:12,opacity:0.85}}>{student.id} · {student.classId} · ภาคเรียน {data.term}/{data.year}</div></div><div style={{display:'flex',gap:6}}><button onClick={()=>setPinModal(true)} style={{background:'rgba(255,255,255,0.2)',border:'none',color:'white',padding:'7px 12px',borderRadius:8,cursor:'pointer',fontSize:13,fontFamily:'inherit'}}>🔑</button><button onClick={onLogout} style={{background:'rgba(255,255,255,0.2)',border:'none',color:'white',padding:'7px 12px',borderRadius:8,cursor:'pointer',fontSize:13,fontFamily:'inherit'}}>ออก</button></div></div></div>
-    <div style={{display:'flex',background:'white',borderBottom:`1px solid ${C.border}`}}>
-  {[
-    ['scores','📊 คะแนน'],
-    ['att','✓ เข้าเรียน'],
-    ...(isHomeroom ? [['homeroom','🏫 ประจำชั้น']] : [])
-  ].map(([v,l])=>
-    <button key={v} onClick={()=>setTab(v)} style={{flex:1,padding:'13px 8px',border:'none',cursor:'pointer',background:'transparent',fontWeight:tab===v?700:400,color:tab===v?C.red:C.muted,borderBottom:`2.5px solid ${tab===v?C.red:'transparent'}`,fontSize:14,fontFamily:'inherit'}}>{l}</button>
-  )}
-</div>
-    <div style={{padding:16}}>
-      {tab==='scores'&&<div>
-        {enrolledSubjects.length===0?<div style={{textAlign:'center',padding:40,color:C.muted}}>ยังไม่มีข้อมูลรายวิชาของคุณ</div>:<>
-          {enrolledSubjects.length>1&&<select value={selSubjId} onChange={e=>setSelSubjId(e.target.value)} style={{...sInp,marginBottom:12,fontFamily:'inherit'}}>{enrolledSubjects.map(s=><option key={s.id} value={s.id}>{s.code?`${s.code} ${s.name}`:s.name}</option>)}</select>}
+    <div style={{display:'flex',background:'white',borderBottom:`1px solid ${C.border}`}}>{[['scores','📊 คะแนน'],['att','✓ เข้าเรียน'],...(isHomeroom ? [['homeroom','🏫 ประจำชั้น']] : [])].map(([v,l])=><button key={v} onClick={()=>setTab(v)} style={{flex:1,padding:'13px 8px',border:'none',cursor:'pointer',background:'transparent',fontWeight:tab===v?700:400,color:tab===v?C.red:C.muted,borderBottom:`2.5px solid ${tab===v?C.red:'transparent'}`,fontSize:14,fontFamily:'inherit'}}>{l}</button>)}</div>
+    <div style={{padding:16}}>{tab==='scores'&&<div>{enrolledSubjects.length===0?<div style={{textAlign:'center',padding:40,color:C.muted}}>ยังไม่มีข้อมูลรายวิชาของคุณ</div>:<>{enrolledSubjects.length>1&&<select value={selSubjId} onChange={e=>setSelSubjId(e.target.value)} style={{...sInp,marginBottom:12,fontFamily:'inherit'}}>{enrolledSubjects.map(s=><option key={s.id} value={s.id}>{s.code?`${s.code} ${s.name}`:s.name}</option>)}</select>}
           {hasAny&&<div style={{...sCard,background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',textAlign:'center',marginBottom:12}}><div style={{fontSize:13,opacity:0.8}}>คะแนนรวม · {subj?.name}</div><div style={{fontSize:52,fontWeight:700,lineHeight:1.1,margin:'6px 0'}}>{tot}</div><div style={{fontSize:15,opacity:0.85}}>จาก {mx} ({mx>0?Math.round(tot/mx*100):0}%)</div>{grade&&<div style={{marginTop:10,background:'rgba(255,255,255,0.2)',display:'inline-block',padding:'5px 24px',borderRadius:24,fontSize:20,fontWeight:700}}>เกรด {grade.label}</div>}</div>}
-          {cats.map(cat=>{const cs=getCatScore(student.id,cat,data.scores,data.term,data.year);const cm=getCatMax(cat);const has=hasCatScore(student.id,cat,data.scores,data.term,data.year);return(<div key={cat.id} style={{...sCard,marginBottom:8}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:has?8:0}}><span style={{fontWeight:600,fontSize:15}}>{cat.name}</span><span style={{fontSize:16,fontWeight:700}}>{has?`${cs}/${cm}`:'-'}</span></div>{has&&cm>0&&<div style={{height:7,borderRadius:4,background:'#f3f4f6',overflow:'hidden'}}><div style={{height:'100%',width:`${(cs/cm)*100}%`,background:gradeColor(getGrade(cs,cm)),borderRadius:4}}/></div>}{cat.subs?.map(sub=>{const sr=data.scores.find(x=>x.studentId===student.id&&x.categoryId===cat.id&&x.subId===sub.id&&x.term===data.term&&x.year===data.year);return<div key={sub.id} style={{display:'flex',justifyContent:'space-between',fontSize:13,padding:'3px 0 3px 8px',borderTop:`1px dashed ${C.border}`}}><span style={{color:C.muted}}>{sub.name}{sub.date?` · ${fmtDate(sub.date)}`:''}</span><span style={{fontWeight:600}}>{sr?`${sr.score}/${sub.max}`:'-'}</span></div>;})}</div>);})}
-        </>}
-      </div>}
-      {tab==='att'&&<div>
-        {enrolledSubjects.length===0?<div style={{textAlign:'center',padding:40,color:C.muted}}>ยังไม่มีข้อมูลการเข้าเรียน</div>:<>
-          {enrolledSubjects.length>1&&<select value={selSubjId} onChange={e=>setSelSubjId(e.target.value)} style={{...sInp,marginBottom:12,fontFamily:'inherit'}}>{enrolledSubjects.map(s=><option key={s.id} value={s.id}>{s.code?`${s.code} ${s.name}`:s.name}</option>)}</select>}
-          <div style={{...sCard,background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',textAlign:'center',marginBottom:12}}>
-            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}><div style={{background:'rgba(255,255,255,0.15)',borderRadius:8,padding:10}}><div style={{fontSize:12,opacity:0.85}}>🌅 เข้าแถว</div><div style={{fontSize:28,fontWeight:700}}>{morningRate??'-'}%</div></div><div style={{background:'rgba(255,255,255,0.15)',borderRadius:8,padding:10}}><div style={{fontSize:12,opacity:0.85}}>📚 {subj?.code||'คาบ'}</div><div style={{fontSize:28,fontWeight:700}}>{attRate??'-'}%</div></div></div>
-            <div style={{fontSize:13}}>จิตพิสัย: <b>{conduct.score>0?'+':''}{conduct.score}</b></div>
-            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:5,marginTop:8}}>{S_ORDER.map(k=><div key={k} style={{background:'rgba(255,255,255,0.15)',borderRadius:6,padding:'6px 4px'}}><div style={{fontSize:16,fontWeight:700}}>{conduct.counts[k]}</div><div style={{fontSize:11}}>{STATUS[k].label}</div></div>)}</div></div>
-          {myAtt.slice(0,60).map((a,i)=>{const sj=data.subjects.find(x=>x.id===a.subjectId);return<div key={i} style={{...sCard,marginBottom:5,padding:'10px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontSize:14,fontWeight:500}}>{fmtDate(a.date)}</div><div style={{fontSize:12,color:C.muted}}>{a.type==='morning'?'🌅 เข้าแถว':`📚 ${sj?.code||sj?.name||'คาบ'}${a.period?` คาบ${a.period}`:''}`}</div></div><span style={{background:STATUS[a.status]?.bg||'#999',color:'white',fontSize:13,padding:'4px 12px',borderRadius:20,fontWeight:600}}>{STATUS[a.status]?.label}{STATUS[a.status]?.custom&&a.customScore!==undefined?` (${a.customScore>0?'+':''}${a.customScore})`:''}</span></div>;})}
-        </>}
-      </div>}
-      {tab==='homeroom' && isHomeroom && (
-  <HomeroomPage
-    data={data}
-    update={update}
-    role="student"
-    currentStudentId={student.id}
-    toast={(msg) => alert(msg)}
-  />
-)}</div>
-    <Sheet open={pinModal} title="🔑 เปลี่ยน PIN" onClose={()=>{setPinModal(false);setPinErr('');}}><input type="password" placeholder="PIN ปัจจุบัน" value={pf.cur} onChange={e=>setPf(p=>({...p,cur:e.target.value}))} style={{...sInp,marginBottom:8}} maxLength={4}/><input type="password" placeholder="PIN ใหม่ 4 หลัก" value={pf.n1} onChange={e=>setPf(p=>({...p,n1:e.target.value.replace(/\D/g,'').slice(0,4)}))} style={{...sInp,marginBottom:8}} maxLength={4}/><input type="password" placeholder="ยืนยัน" value={pf.n2} onChange={e=>setPf(p=>({...p,n2:e.target.value.replace(/\D/g,'').slice(0,4)}))} style={{...sInp,marginBottom:12}} maxLength={4}/>{pinErr&&<div style={{color:C.red,fontSize:13,marginBottom:10,padding:'6px 10px',background:'#fff0f0',borderRadius:6}}>{pinErr}</div>}<div style={{display:'flex',gap:8}}><button onClick={()=>{setPinModal(false);setPinErr('');}} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={changePin} style={{...sBtn(true),flex:1}}>บันทึก</button></div></Sheet>
-  </div>);}
+          {cats.map(cat=>{const cs=getCatScore(student.id,cat,data.scores,data.term,data.year);const cm=getCatMax(cat);const has=hasCatScore(student.id,cat,data.scores,data.term,data.year);return(<div key={cat.id} style={{...sCard,marginBottom:8}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:has?8:0}}><span style={{fontWeight:600,fontSize:15}}>{cat.name}</span><span style={{fontSize:16,fontWeight:700}}>{has?`${cs}/${cm}`:'-'}</span></div>{has&&cm>0&&<div style={{height:7,borderRadius:4,background:'#f3f4f6',overflow:'hidden'}}><div style={{height:'100%',width:`${(cs/cm)*100}%`,background:gradeColor(getGrade(cs,cm)),borderRadius:4}}/></div>}{cat.subs?.map(sub=>{const sr=data.scores.find(x=>x.studentId===student.id&&x.categoryId===cat.id&&x.subId===sub.id&&x.term===data.term&&x.year===data.year);return<div key={sub.id} style={{display:'flex',justifyContent:'space-between',fontSize:13,padding:'3px 0 3px 8px',borderTop:`1px dashed ${C.border}`}}><span style={{color:C.muted}}>{sub.name}{sub.date?` · ${fmtDate(sub.date)}`:''}</span><span style={{fontWeight:600}}>{sr?`${sr.score}/${sub.max}`:'-'}</span></div>;})}</div>);})}</>}</div>}
+      {tab==='att'&&<div>{enrolledSubjects.length===0?<div style={{textAlign:'center',padding:40,color:C.muted}}>ยังไม่มีข้อมูลการเข้าเรียน</div>:<>{enrolledSubjects.length>1&&<select value={selSubjId} onChange={e=>setSelSubjId(e.target.value)} style={{...sInp,marginBottom:12,fontFamily:'inherit'}}>{enrolledSubjects.map(s=><option key={s.id} value={s.id}>{s.code?`${s.code} ${s.name}`:s.name}</option>)}</select>}
+          <div style={{...sCard,background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',textAlign:'center',marginBottom:12}}><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}><div style={{background:'rgba(255,255,255,0.15)',borderRadius:8,padding:10}}><div style={{fontSize:12,opacity:0.85}}>🌅 เข้าแถว</div><div style={{fontSize:28,fontWeight:700}}>{morningRate??'-'}%</div></div><div style={{background:'rgba(255,255,255,0.15)',borderRadius:8,padding:10}}><div style={{fontSize:12,opacity:0.85}}>📚 {subj?.code||'คาบ'}</div><div style={{fontSize:28,fontWeight:700}}>{attRate??'-'}%</div></div></div><div style={{fontSize:13}}>จิตพิสัย: <b>{conduct.score>0?'+':''}{conduct.score}</b></div><div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:5,marginTop:8}}>{S_ORDER.map(k=><div key={k} style={{background:'rgba(255,255,255,0.15)',borderRadius:6,padding:'6px 4px'}}><div style={{fontSize:16,fontWeight:700}}>{conduct.counts[k]}</div><div style={{fontSize:11}}>{STATUS[k].label}</div></div>)}</div></div>
+          {myAtt.slice(0,60).map((a,i)=>{const sj=data.subjects.find(x=>x.id===a.subjectId);return<div key={i} style={{...sCard,marginBottom:5,padding:'10px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontSize:14,fontWeight:500}}>{fmtDate(a.date)}</div><div style={{fontSize:12,color:C.muted}}>{a.type==='morning'?'🌅 เข้าแถว':`📚 ${sj?.code||sj?.name||'คาบ'}${a.period?` คาบ${a.period}`:''}`}</div></div><span style={{background:STATUS[a.status]?.bg||'#999',color:'white',fontSize:13,padding:'4px 12px',borderRadius:20,fontWeight:600}}>{STATUS[a.status]?.label}{STATUS[a.status]?.custom&&a.customScore!==undefined?` (${a.customScore>0?'+':''}${a.customScore})`:''}</span></div>;})}</>}</div>}
+      {tab==='homeroom' && isHomeroom && (<HomeroomPage data={data} update={update} role="student" currentStudentId={student.id} toast={(msg) => alert(msg)} />)}</div>
+    <Sheet open={pinModal} title="🔑 เปลี่ยน PIN" onClose={()=>{setPinModal(false);setPinErr('');}}><input type="password" placeholder="PIN ปัจจุบัน" value={pf.cur} onChange={e=>setPf(p=>({...p,cur:e.target.value}))} style={{...sInp,marginBottom:8}} maxLength={4}/><input type="password" placeholder="PIN ใหม่ 4 หลัก" value={pf.n1} onChange={e=>setPf(p=>({...p,n1:e.target.value.replace(/\D/g,'').slice(0,4)}))} style={{...sInp,marginBottom:8}} maxLength={4}/><input type="password" placeholder="ยืนยัน" value={pf.n2} onChange={e=>setPf(p=>({...p,n2:e.target.value.replace(/\D/g,'').slice(0,4)}))} style={{...sInp,marginBottom:12}} maxLength={4}/>{pinErr&&<div style={{color:C.red,fontSize:13,marginBottom:10,padding:'6px 10px',background:'#fff0f0',borderRadius:6}}>{pinErr}</div>}<div style={{display:'flex',gap:8}}><button onClick={()=>{setPinModal(false);setPinErr('');}} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={changePin} style={{...sBtn(true),flex:1}}>บันทึก</button></div></Sheet></div>);}
 
 // ===== TEACHER SHELL =====
 function TeacherApp({data,update,onLogout}){const[page,setPage]=useState('home');const[drawerOpen,setDrawerOpen]=useState(false);const[fabOpen,setFabOpen]=useState(false);const[attInit,setAttInit]=useState(null);const[toastMsg,setToastMsg]=useState({msg:'',type:'info'});
@@ -624,24 +796,9 @@ function TeacherApp({data,update,onLogout}){const[page,setPage]=useState('home')
 // ===== MAIN =====
 export default function App(){
   const { data, loading, update } = useFirestore();
-  
-  // 1. ดึงข้อมูลการล็อกอินเดิมจาก localStorage (ถ้ามี)
-  const [user, setUser] = useState(() => {
-    const saved = localStorage.getItem('chinese_app_user');
-    return saved ? JSON.parse(saved) : null;
-  });
-
-  // 2. ฟังก์ชันจัดการล็อกอิน (บันทึกลง localStorage ด้วย)
-  const handleLogin = (userData) => {
-    setUser(userData);
-    localStorage.setItem('chinese_app_user', JSON.stringify(userData));
-  };
-
-  // 3. ฟังก์ชันจัดการล็อกเอาท์ (ลบออกจาก localStorage)
-  const handleLogout = () => {
-    setUser(null);
-    localStorage.removeItem('chinese_app_user');
-  };
+  const [user, setUser] = useState(() => {const saved = localStorage.getItem('chinese_app_user'); return saved ? JSON.parse(saved) : null;});
+  const handleLogin = (userData) => {setUser(userData); localStorage.setItem('chinese_app_user', JSON.stringify(userData));};
+  const handleLogout = () => {setUser(null); localStorage.removeItem('chinese_app_user');};
 
   useEffect(()=>{
     const l=document.createElement('link');l.rel='stylesheet';l.href='https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap';document.head.appendChild(l);
@@ -650,16 +807,12 @@ export default function App(){
 
   if(loading)return<div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100vh',background:C.bg}}><div style={{fontSize:64,color:C.red}}>中</div><div style={{color:C.muted,marginTop:12}}>กำลังเชื่อมต่อฐานข้อมูล...</div></div>;
   if(!data)return <div style={{padding:40,textAlign:'center',color:C.red}}>ข้อผิดพลาด: ไม่สามารถโหลดข้อมูลจาก Firebase ได้</div>;
-  if(!user)return<LoginScreen data={data} onLogin={handleLogin}/>; // ส่ง handleLogin ไปแทน setUser
+  if(!user)return<LoginScreen data={data} onLogin={handleLogin}/>;
   
   if(user.role==='teacher')return<TeacherApp data={data} update={update} onLogout={handleLogout}/>;
   
-  // 4. เช็คกรณีนักเรียนล็อกอินค้างไว้แต่ถูกลบชื่อออกจากระบบไปแล้ว ให้บังคับเด้งออก
   const studentData = data.students.find(s=>s.id===user.id);
-  if (!studentData) {
-    handleLogout();
-    return null;
-  }
+  if (!studentData) {handleLogout(); return null;}
   
   return<StudentApp data={data} update={update} student={studentData} onLogout={handleLogout}/>;
 }
