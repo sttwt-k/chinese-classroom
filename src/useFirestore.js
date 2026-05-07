@@ -45,6 +45,7 @@ const processProfiles = async (profiles) => {
 
 // ===== ข้อมูลเริ่มต้นระบบ =====
 export const initData = () => ({
+  appName: 'ห้องเรียนของคุณครูต้นฝน', // เปลี่ยนชื่อเริ่มต้นที่นี่
   password: '0000',
   term: 1,
   year: 2569,

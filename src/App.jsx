@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { useFirestore, initData } from "./useFirestore"; 
-import { HomeroomPage } from './HomeroomPage';
+import { initializeApp } from "firebase/app";
+import { getFirestore, doc, setDoc, onSnapshot } from "firebase/firestore";
+import { getStorage, ref, uploadString, getDownloadURL } from "firebase/storage";
 
 // ===== CONSTANTS =====
 const DEFAULT_CLASSES=['ม.1/1','ม.1/2','ม.1/3','ม.2/1','ม.2/2','ม.2/3','ม.3/1','ม.3/2','ม.3/3','ม.4/1','ม.4/2','ม.4/3','ม.5/1','ม.5/2','ม.5/3','ม.6/1','ม.6/2','ม.6/3'];
@@ -41,19 +42,207 @@ const sBtn=(p=true,sm=false)=>({padding:sm?'7px 14px':'10px 20px',borderRadius:8
 const sInp={padding:'10px 12px',borderRadius:8,border:`1.5px solid ${C.border}`,width:'100%',fontSize:15,background:C.card,color:C.text,boxSizing:'border-box',fontFamily:'inherit'};
 const sTab=a=>({padding:'9px 16px',borderRadius:8,cursor:'pointer',border:'none',fontWeight:a?700:500,background:a?C.red:'transparent',color:a?'white':C.muted,fontSize:14,fontFamily:'inherit'});
 
+// ===== FIREBASE SETUP & HOOKS =====
+const firebaseConfig = {
+  apiKey: "AIzaSyD5lp8QvTTHKeJu3ZP74GUjDOtXQphdIRc",
+  authDomain: "chinese-classroom-81547.firebaseapp.com",
+  projectId: "chinese-classroom-81547",
+  storageBucket: "chinese-classroom-81547.firebasestorage.app",
+  messagingSenderId: "405497440904",
+  appId: "1:405497440904:web:96721a405f2a9ba757cd3d",
+  measurementId: "G-1FNYQ74BKM"
+};
+
+let db, storage;
+try {
+  const app = initializeApp(firebaseConfig);
+  db = getFirestore(app);
+  storage = getStorage(app);
+} catch (e) {
+  console.warn("Firebase Init Error:", e);
+}
+
+const DOC_ID = "main_data";
+const COLLECTION = "app_data";
+
+const isBase64 = s => typeof s === 'string' && s.startsWith('data:image');
+const uploadImg = async (base64, path) => {
+  try {
+    if (!storage) return base64;
+    const r = ref(storage, path);
+    await uploadString(r, base64, 'data_url');
+    return await getDownloadURL(r);
+  } catch (e) {
+    console.error('Upload error:', e);
+    return base64; 
+  }
+};
+
+const processProfiles = async (profiles) => {
+  const result = {};
+  for (const [sid, profile] of Object.entries(profiles || {})) {
+    const p = { ...profile };
+    if (isBase64(p.profilePhoto)) {
+      p.profilePhoto = await uploadImg(p.profilePhoto, `profiles/${sid}/photo.jpg`);
+    }
+    if (Array.isArray(p.homePhotos)) {
+      p.homePhotos = await Promise.all(
+        p.homePhotos.map((ph, i) => isBase64(ph) ? uploadImg(ph, `profiles/${sid}/home_${i}.jpg`) : Promise.resolve(ph))
+      );
+    }
+    result[sid] = p;
+  }
+  return result;
+};
+
+const initData = () => ({
+  appName: 'ห้องเรียนของคุณครูต้นฝน',
+  password: '0000',
+  term: 1,
+  year: 2569,
+  homeroom: 'ม.1/1',
+  classes: ['ม.1/1','ม.1/2','ม.1/3','ม.2/1','ม.2/2','ม.2/3','ม.3/1','ม.3/2','ม.3/3','ม.4/1','ม.4/2','ม.4/3','ม.5/1','ม.5/2','ม.5/3','ม.6/1','ม.6/2','ม.6/3'],
+  subjects: [{ id: 's1', code: 'จ20201', name: 'ภาษาจีนเบื้องต้น', credits: 1.0 }],
+  categories: [],
+  students: [],
+  attendance: [],
+  scores: [],
+  profiles: {},
+  savings: {},
+  conduct: { presentScore: 1, absentScore: -1, lateGroup: 3, latePenalty: -1, minAttPct: 20 }
+});
+
+function useFirestore() {
+  const [data, setData] = useState(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (!db) { setLoading(false); return; }
+    const docRef = doc(db, COLLECTION, DOC_ID);
+
+    const unsubscribe = onSnapshot(docRef, 
+      (docSnap) => {
+        if (docSnap.exists()) {
+          setData(docSnap.data());
+        } else {
+          const defaultData = initData();
+          setDoc(docRef, defaultData).catch(err => console.error("Create initial data error:", err));
+          setData(defaultData);
+        }
+        setLoading(false);
+      },
+      (error) => {
+        console.error("Firestore Error:", error);
+        alert("เชื่อมต่อฐานข้อมูลไม่ได้ กรุณาเช็ก Firebase Rules");
+        setLoading(false);
+      }
+    );
+
+    return () => unsubscribe();
+  }, []);
+
+  const update = useCallback((fn) => {
+    setData((prev) => {
+      if (!prev) return prev;
+      const next = fn(prev);
+
+      const save = async () => {
+        const toSave = { ...next };
+        if (toSave.profiles) {
+          toSave.profiles = await processProfiles(toSave.profiles);
+        }
+        if (db) {
+          const docRef = doc(db, COLLECTION, DOC_ID);
+          await setDoc(docRef, toSave);
+        }
+      };
+
+      save().catch(err => {
+        console.error("Firebase save error:", err);
+        alert("บันทึกข้อมูลไม่สำเร็จ");
+      });
+      
+      return next;
+    });
+  }, []);
+
+  return { data, loading, update };
+}
+
+// ===== HOMEROOM PAGE =====
+function HomeroomPage({ data, update, role, currentStudentId, toast }) {
+  const isTeacher = role === 'teacher';
+  const homeroomStudents = data.students.filter(s => s.classId === data.homeroom).sort((a,b)=>(a.number||999)-(b.number||999));
+
+  return (
+    <div style={{ padding: '14px 14px 100px' }}>
+      <div style={{ fontWeight: 700, fontSize: 18, marginBottom: 12, color: C.text }}>🏫 ประจำชั้น {data.homeroom}</div>
+      <div style={sCard}>
+        <div style={{ fontSize: 14, color: C.muted, marginBottom: 8 }}>รายชื่อนักเรียนในที่ปรึกษา ({homeroomStudents.length} คน)</div>
+        {homeroomStudents.map((s, i) => (
+          <div key={s.id} style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', borderBottom: `1px solid ${C.border}` }}>
+            <div><span style={{color: C.muted, marginRight: 8}}>{s.number || i+1}.</span><span style={{fontWeight: 600}}>{s.name}</span> {s.nickname && `(${s.nickname})`}</div>
+            <div style={{color: C.red, fontSize: 12}}>{s.id}</div>
+          </div>
+        ))}
+        {homeroomStudents.length === 0 && <div style={{ color: C.muted, textAlign: 'center', padding: 20 }}>ไม่มีนักเรียนในห้องนี้</div>}
+      </div>
+    </div>
+  );
+}
+
 // ===== SHARED COMPONENTS =====
 function Sheet({open,title,onClose,children}){if(!open)return null;return(<div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'flex-end',justifyContent:'center',zIndex:300}}><div onClick={e=>e.stopPropagation()} style={{background:'white',borderRadius:'16px 16px 0 0',padding:24,width:'100%',maxWidth:520,maxHeight:'88vh',overflowY:'auto'}}>{title&&<div style={{fontWeight:700,fontSize:17,marginBottom:16,color:C.text}}>{title}</div>}{children}</div></div>);}
 function Toast({msg,type,onClose}){useEffect(()=>{if(msg){const t=setTimeout(onClose,2800);return()=>clearTimeout(t);}},[msg,onClose]);if(!msg)return null;return<div style={{position:'fixed',bottom:90,left:'50%',transform:'translateX(-50%)',background:type==='success'?'#16a34a':'#dc2626',color:'white',padding:'10px 18px',borderRadius:24,fontSize:14,boxShadow:'0 4px 16px rgba(0,0,0,0.2)',zIndex:400,maxWidth:'90%',textAlign:'center'}}>{msg}</div>;}
-function TopBar({onMenu,onLogout,label}){return(<div style={{background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',padding:'12px 14px',display:'flex',justifyContent:'space-between',alignItems:'center',position:'sticky',top:0,zIndex:50,boxShadow:'0 2px 12px rgba(192,57,43,0.3)'}}><button onClick={onMenu} style={{background:'rgba(255,255,255,0.15)',border:'none',color:'white',width:38,height:38,borderRadius:10,cursor:'pointer',fontSize:20,display:'flex',alignItems:'center',justifyContent:'center'}}>☰</button><div style={{flex:1,textAlign:'center'}}><div style={{fontWeight:700,fontSize:16}}>中文课堂</div><div style={{fontSize:11,opacity:0.85}}>{label}</div></div><button onClick={onLogout} style={{background:'rgba(255,255,255,0.15)',border:'none',color:'white',width:38,height:38,borderRadius:10,cursor:'pointer',fontSize:18,display:'flex',alignItems:'center',justifyContent:'center'}}>⏻</button></div>);}
-function Drawer({open,onClose,current,onNav,data}){return(<><div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',zIndex:200,opacity:open?1:0,pointerEvents:open?'auto':'none',transition:'opacity 0.2s'}}/><div style={{position:'fixed',top:0,left:0,bottom:0,width:280,background:'white',zIndex:201,transform:open?'translateX(0)':'translateX(-100%)',transition:'transform 0.25s',boxShadow:'2px 0 16px rgba(0,0,0,0.15)',display:'flex',flexDirection:'column'}}><div style={{background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',padding:'20px 18px'}}><div style={{fontSize:38,lineHeight:1}}>中</div><div style={{fontWeight:700,fontSize:16,marginTop:4}}>ห้องเรียนภาษาจีน</div><div style={{fontSize:12,opacity:0.85}}>ภาคเรียน {data.term}/{data.year}</div></div><div style={{flex:1,overflowY:'auto',padding:'10px 0'}}>{NAV.map((n,i)=>(<div key={n.id}>{i===5&&<div style={{height:1,background:C.border,margin:'10px 16px'}}/>}<button onClick={()=>{onNav(n.id);onClose();}} style={{width:'100%',padding:'12px 18px',border:'none',background:current===n.id?C.light:'transparent',color:current===n.id?C.red:C.text,display:'flex',alignItems:'center',gap:14,cursor:'pointer',fontSize:15,fontWeight:current===n.id?700:500,fontFamily:'inherit',borderLeft:`4px solid ${current===n.id?C.red:'transparent'}`}}><span style={{fontSize:18,width:22,textAlign:'center'}}>{n.icon}</span><span>{n.label}</span></button></div>))}</div></div></>);}
+function TopBar({onMenu,onLogout,label,appName}){return(<div style={{background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',padding:'12px 14px',display:'flex',justifyContent:'space-between',alignItems:'center',position:'sticky',top:0,zIndex:50,boxShadow:'0 2px 12px rgba(192,57,43,0.3)'}}><button onClick={onMenu} style={{background:'rgba(255,255,255,0.15)',border:'none',color:'white',width:38,height:38,borderRadius:10,cursor:'pointer',fontSize:20,display:'flex',alignItems:'center',justifyContent:'center'}}>☰</button><div style={{flex:1,textAlign:'center'}}><div style={{fontWeight:700,fontSize:16}}>{appName}</div><div style={{fontSize:11,opacity:0.85}}>{label}</div></div><button onClick={onLogout} style={{background:'rgba(255,255,255,0.15)',border:'none',color:'white',width:38,height:38,borderRadius:10,cursor:'pointer',fontSize:18,display:'flex',alignItems:'center',justifyContent:'center'}}>⏻</button></div>);}
+function Drawer({open,onClose,current,onNav,data}){return(<><div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',zIndex:200,opacity:open?1:0,pointerEvents:open?'auto':'none',transition:'opacity 0.2s'}}/><div style={{position:'fixed',top:0,left:0,bottom:0,width:280,background:'white',zIndex:201,transform:open?'translateX(0)':'translateX(-100%)',transition:'transform 0.25s',boxShadow:'2px 0 16px rgba(0,0,0,0.15)',display:'flex',flexDirection:'column'}}><div style={{background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',padding:'20px 18px'}}><div style={{fontSize:38,lineHeight:1}}>中</div><div style={{fontWeight:700,fontSize:16,marginTop:4}}>{data.appName||'ห้องเรียนของคุณครูต้นฝน'}</div><div style={{fontSize:12,opacity:0.85}}>ภาคเรียน {data.term}/{data.year}</div></div><div style={{flex:1,overflowY:'auto',padding:'10px 0'}}>{NAV.map((n,i)=>(<div key={n.id}>{i===5&&<div style={{height:1,background:C.border,margin:'10px 16px'}}/>}<button onClick={()=>{onNav(n.id);onClose();}} style={{width:'100%',padding:'12px 18px',border:'none',background:current===n.id?C.light:'transparent',color:current===n.id?C.red:C.text,display:'flex',alignItems:'center',gap:14,cursor:'pointer',fontSize:15,fontWeight:current===n.id?700:500,fontFamily:'inherit',borderLeft:`4px solid ${current===n.id?C.red:'transparent'}`}}><span style={{fontSize:18,width:22,textAlign:'center'}}>{n.icon}</span><span>{n.label}</span></button></div>))}</div></div></>);}
 
 // ===== LOGIN =====
-function LoginScreen({data,onLogin}){const[mode,setMode]=useState(null);const[pwd,setPwd]=useState('');const[sid,setSid]=useState('');const[pin,setPin]=useState('');const[err,setErr]=useState('');
-  const loginT=()=>pwd===data.password?onLogin({role:'teacher'}):setErr('รหัสผ่านไม่ถูกต้อง');
-  const loginS=()=>{const s=data.students.find(x=>x.id===sid.trim());if(!s)return setErr('ไม่พบรหัสนักเรียน');if(pin!==s.pin)return setErr('PIN ไม่ถูกต้อง');onLogin({role:'student',id:s.id});};
-  return(<div style={{minHeight:'100vh',background:C.bg,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:24}}><div style={{textAlign:'center',marginBottom:44}}><div style={{width:88,height:88,borderRadius:24,background:`linear-gradient(135deg,${C.red},${C.dark})`,display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px',boxShadow:'0 8px 32px rgba(192,57,43,0.3)'}}><span style={{fontSize:52,color:'white',lineHeight:1}}>中</span></div><div style={{fontSize:24,fontWeight:700,color:C.red}}>ห้องเรียนภาษาจีน</div><div style={{color:C.muted,fontSize:14,marginTop:4}}>ระบบจัดการการเรียนการสอน</div></div>
-    {!mode?(<div style={{width:'100%',maxWidth:320,display:'flex',flexDirection:'column',gap:12}}><button onClick={()=>{setMode('teacher');setErr('');}} style={{...sBtn(true),padding:18,fontSize:17,borderRadius:12}}>👩‍🏫 เข้าสู่ระบบครู</button><button onClick={()=>{setMode('student');setErr('');}} style={{...sBtn(false),padding:18,fontSize:17,borderRadius:12,border:`1.5px solid ${C.border}`}}>🎒 เข้าสู่ระบบนักเรียน</button></div>):(<div style={{...sCard,width:'100%',maxWidth:340}}><div style={{fontWeight:700,fontSize:18,marginBottom:16}}>{mode==='teacher'?'👩‍🏫 ครู':'🎒 นักเรียน'}</div>{mode==='teacher'?<input type="password" placeholder="รหัสผ่าน (0000)" value={pwd} onChange={e=>setPwd(e.target.value)} onKeyDown={e=>e.key==='Enter'&&loginT()} style={{...sInp,marginBottom:10}} autoFocus/>:<><input placeholder="รหัสนักเรียน" value={sid} onChange={e=>setSid(e.target.value)} style={{...sInp,marginBottom:8}} autoFocus/><input type="password" placeholder="PIN 4 หลัก" value={pin} onChange={e=>setPin(e.target.value)} onKeyDown={e=>e.key==='Enter'&&loginS()} style={{...sInp,marginBottom:10}} maxLength={4}/></>}
-      {err&&<div style={{color:C.red,fontSize:13,marginBottom:8,padding:'6px 10px',background:'#fff0f0',borderRadius:6}}>{err}</div>}<button onClick={mode==='teacher'?loginT:loginS} style={{...sBtn(true),width:'100%',marginBottom:8}}>เข้าสู่ระบบ</button><button onClick={()=>{setMode(null);setErr('');}} style={{...sBtn(false),width:'100%'}}>← ย้อนกลับ</button></div>)}</div>);}
+function LoginScreen({data,onLogin}){
+  const[id,setId]=useState('');
+  const[pin,setPin]=useState('');
+  const[err,setErr]=useState('');
+
+  const doLogin=()=>{
+    if(id===data.password){
+      onLogin({role:'teacher'});
+    }else{
+      const s=data.students.find(x=>x.id===id.trim());
+      if(s){
+        if(s.pin===pin) onLogin({role:'student',id:s.id});
+        else setErr('PIN ของนักเรียนไม่ถูกต้อง');
+      }else{
+        setErr('รหัสผ่านครู หรือ รหัสนักเรียน ไม่ถูกต้อง');
+      }
+    }
+  };
+
+  return(
+    <div style={{minHeight:'100vh',background:C.bg,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:24}}>
+      <div style={{textAlign:'center',marginBottom:32}}>
+        <div style={{width:88,height:88,borderRadius:24,background:`linear-gradient(135deg,${C.red},${C.dark})`,display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px',boxShadow:'0 8px 32px rgba(192,57,43,0.3)'}}><span style={{fontSize:52,color:'white',lineHeight:1}}>中</span></div>
+        <div style={{fontSize:24,fontWeight:700,color:C.red}}>{data.appName||'ห้องเรียนของคุณครูต้นฝน'}</div>
+        <div style={{color:C.muted,fontSize:14,marginTop:4}}>ระบบจัดการการเรียนการสอน</div>
+      </div>
+      
+      <div style={{...sCard,width:'100%',maxWidth:340}}>
+        <div style={{fontSize:13,color:C.muted,marginBottom:12,textAlign:'center',background:C.light,padding:'8px',borderRadius:8}}>
+          💡 <b>สำหรับครู (ครั้งแรก):</b> พิมพ์ <b>0000</b> ในช่องแรก แล้วกดเข้าสู่ระบบได้เลย (เว้นช่อง PIN ไว้)
+        </div>
+        
+        <label style={{fontSize:12,color:C.muted,marginBottom:4,display:'block'}}>รหัสผ่านครู หรือ รหัสนักเรียน</label>
+        <input placeholder="เช่น 0000 หรือ รหัสนักเรียน" value={id} onChange={e=>setId(e.target.value)} onKeyDown={e=>e.key==='Enter'&&doLogin()} style={{...sInp,marginBottom:12}} autoFocus/>
+        
+        <label style={{fontSize:12,color:C.muted,marginBottom:4,display:'block'}}>PIN 4 หลัก (สำหรับนักเรียนเท่านั้น)</label>
+        <input type="password" placeholder="ครูไม่ต้องกรอกช่องนี้" value={pin} onChange={e=>setPin(e.target.value)} onKeyDown={e=>e.key==='Enter'&&doLogin()} style={{...sInp,marginBottom:16}} maxLength={4}/>
+        
+        {err&&<div style={{color:C.red,fontSize:13,marginBottom:12,padding:'8px 10px',background:'#fff0f0',borderRadius:6,textAlign:'center'}}>{err}</div>}
+        
+        <button onClick={doLogin} style={{...sBtn(true),width:'100%',padding:12}}>เข้าสู่ระบบ</button>
+      </div>
+    </div>
+  );
+}
 
 // ===== DASHBOARD =====
 function Dashboard({data,setPage,openAtt}){const today=todayStr();const morningAtt=data.attendance.filter(a=>a.date===today&&a.type==='morning');const hStu=data.students.filter(s=>s.classId===data.homeroom);const classesHave=sortClasses(data.classes.filter(c=>data.students.some(s=>s.classId===c)));
@@ -98,7 +287,7 @@ function AttendancePage({data,update,initType,initClass,toast}){
       {tab==='morning'&&<div style={{fontSize:12,color:C.muted,marginTop:8}}>เข้าแถว <b style={{color:C.red}}>{data.homeroom}</b> · เก็บสถิติ ไม่นับคะแนน</div>}
     </div>
     {cls&&students.length>0&&(<><div style={{...sCard,padding:12}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:10,fontSize:12,fontWeight:600,flexWrap:'wrap',gap:6}}>{S_ORDER.map(k=><span key={k} style={{color:STATUS[k].bg}}>{STATUS[k].short} <b>{counted(k)}</b></span>)}</div><div style={{display:'flex',gap:6}}><button onClick={()=>markAll('present')} style={{flex:1,padding:7,borderRadius:6,border:'1px solid #16a34a',background:'#dcfce7',color:'#16a34a',fontSize:12,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>✓ มาทุกคน</button><button onClick={()=>markAll('absent')} style={{flex:1,padding:7,borderRadius:6,border:'1px solid #dc2626',background:'#fee2e2',color:'#dc2626',fontSize:12,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>✗ ขาดทุกคน</button></div></div>
-      {students.map((stu,i)=>{const rec=getRec(stu.id);return(<div key={stu.id} style={{...sCard,marginBottom:8,padding:'12px 14px'}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}><div><span style={{fontSize:12,color:C.muted,marginRight:6}}>{stu.number||i+1}.</span><span style={{fontWeight:600,fontSize:15}}>{stu.nickname||stu.name}</span><span style={{fontSize:12,color:C.muted,marginLeft:6}}>{stu.id}</span></div>{rec&&<span style={{background:STATUS[rec.status].bg,color:'white',fontSize:12,padding:'3px 10px',borderRadius:12,fontWeight:600}}>{STATUS[rec.status].label}{STATUS[rec.status]?.custom&&rec.customScore!==undefined?` (${rec.customScore>0?'+':''}${rec.customScore})`:''}</span>}</div><div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:5}}>{S_ORDER.map(k=>{const a=rec?.status===k;return<button key={k} onClick={()=>setStatus(stu.id,k)} style={{padding:'7px 4px',borderRadius:6,border:`1.5px solid ${a?STATUS[k].bg:'#e5e7eb'}`,background:a?STATUS[k].bg:'white',color:a?'white':'#9ca3af',fontSize:12,fontWeight:a?700:500,cursor:'pointer',fontFamily:'inherit'}}>{STATUS[k].label}</button>;})}</div></div>);})}</>)}
+      {students.map((stu,i)=>{const rec=getRec(stu.id);return(<div key={stu.id} style={{...sCard,marginBottom:8,padding:'12px 14px'}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}><div><span style={{fontSize:12,color:C.muted,marginRight:6}}>{stu.number||i+1}.</span><span style={{fontWeight:600,fontSize:15}}>{stu.nickname||stu.name}</span>{stu.chineseName&&<span style={{fontSize:13,color:'#0891b2',marginLeft:6}}>{stu.chineseName}</span>}<div style={{fontSize:12,color:C.muted,marginTop:2}}>{stu.id}</div></div>{rec&&<span style={{background:STATUS[rec.status].bg,color:'white',fontSize:12,padding:'3px 10px',borderRadius:12,fontWeight:600}}>{STATUS[rec.status].label}{STATUS[rec.status]?.custom&&rec.customScore!==undefined?` (${rec.customScore>0?'+':''}${rec.customScore})`:''}</span>}</div><div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:5}}>{S_ORDER.map(k=>{const a=rec?.status===k;return<button key={k} onClick={()=>setStatus(stu.id,k)} style={{padding:'7px 4px',borderRadius:6,border:`1.5px solid ${a?STATUS[k].bg:'#e5e7eb'}`,background:a?STATUS[k].bg:'white',color:a?'white':'#9ca3af',fontSize:12,fontWeight:a?700:500,cursor:'pointer',fontFamily:'inherit'}}>{STATUS[k].label}</button>;})}</div></div>);})}</>)}
     {!cls&&tab==='class'&&<div style={{textAlign:'center',color:C.muted,padding:48}}>📋 เลือกวิชาและห้องเรียน</div>}
     <Sheet open={!!scoreModal} title={scoreModal?`📝 ${STATUS[scoreModal.status]?.label} — คะแนนจิตพิสัย`:''} onClose={()=>setScoreModal(null)}>{scoreModal&&<div><div style={{fontSize:12,color:C.muted,marginBottom:6}}>+เท่ากับมา · -เท่ากับขาด · 0เท่ากับสาย</div><input type="number" step="0.5" value={scoreModal.customScore} onChange={e=>setScoreModal(p=>({...p,customScore:parseFloat(e.target.value)||0}))} style={{...sInp,marginBottom:10,fontSize:18,fontWeight:700,textAlign:'center'}} autoFocus/><div style={{display:'flex',gap:6,marginBottom:14}}>{[-1,-0.5,0,0.5,1].map(n=><button key={n} onClick={()=>setScoreModal(p=>({...p,customScore:n}))} style={{flex:1,padding:8,borderRadius:6,border:`1.5px solid ${scoreModal.customScore===n?C.red:C.border}`,background:scoreModal.customScore===n?C.red:'white',color:scoreModal.customScore===n?'white':C.text,cursor:'pointer',fontFamily:'inherit',fontSize:13,fontWeight:600}}>{n>0?'+':''}{n}</button>)}</div><input value={scoreModal.note||''} onChange={e=>setScoreModal(p=>({...p,note:e.target.value}))} style={{...sInp,marginBottom:14}} placeholder="หมายเหตุ"/><div style={{display:'flex',gap:8}}><button onClick={()=>setScoreModal(null)} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={()=>{saveStatus(scoreModal.studentId,scoreModal.status,scoreModal.customScore,scoreModal.note);setScoreModal(null);}} style={{...sBtn(true),flex:1}}>บันทึก</button></div></div>}</Sheet></div>);}
 
@@ -292,23 +481,44 @@ function IOPage({data,update,toast}){
   </div>);}
 
 // ===== SETTINGS =====
-function SettingsPage({data,update,toast}){const[form,setForm]=useState({term:data.term,year:data.year,homeroom:data.homeroom,password:'',presentScore:data.conduct.presentScore,absentScore:data.conduct.absentScore,lateGroup:data.conduct.lateGroup,latePenalty:data.conduct.latePenalty,minAttPct:data.conduct.minAttPct});
+function SettingsPage({data,update,toast}){const[form,setForm]=useState({appName:data.appName||'ห้องเรียนของคุณครูต้นฝน',term:data.term,year:data.year,homeroom:data.homeroom,password:'',presentScore:data.conduct.presentScore,absentScore:data.conduct.absentScore,lateGroup:data.conduct.lateGroup,latePenalty:data.conduct.latePenalty,minAttPct:data.conduct.minAttPct});
   const sortedCls=useMemo(()=>sortClasses(data.classes),[data.classes]);
-  const save=()=>{update(prev=>({...prev,term:parseInt(form.term)||prev.term,year:parseInt(form.year)||prev.year,homeroom:form.homeroom,password:form.password.trim()||prev.password,conduct:{presentScore:parseFloat(form.presentScore)||0,absentScore:parseFloat(form.absentScore)||0,lateGroup:parseInt(form.lateGroup)||3,latePenalty:parseFloat(form.latePenalty)||0,minAttPct:parseInt(form.minAttPct)||20}}));toast('บันทึกแล้ว','success');setForm(p=>({...p,password:''}));};
+  const save=()=>{update(prev=>({...prev,appName:form.appName.trim()||prev.appName,term:parseInt(form.term)||prev.term,year:parseInt(form.year)||prev.year,homeroom:form.homeroom,password:form.password.trim()||prev.password,conduct:{presentScore:parseFloat(form.presentScore)||0,absentScore:parseFloat(form.absentScore)||0,lateGroup:parseInt(form.lateGroup)||3,latePenalty:parseFloat(form.latePenalty)||0,minAttPct:parseInt(form.minAttPct)||20}}));toast('บันทึกแล้ว','success');setForm(p=>({...p,password:''}));};
   const wipe=()=>{if(!window.confirm('ล้างข้อมูลทั้งหมด?'))return;if(!window.confirm('ยืนยัน?'))return;update(()=>initData());toast('ล้างแล้ว','success');};
   return(<div style={{padding:'14px 14px 100px'}}><div style={{fontWeight:700,fontSize:18,marginBottom:12,color:C.text}}>⚙️ ตั้งค่า</div>
+    <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:8}}>🏫 ชื่อแอปพลิเคชัน</div><input value={form.appName} onChange={e=>setForm(p=>({...p,appName:e.target.value}))} style={sInp}/></div>
     <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:10}}>📅 ภาคเรียน</div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ภาคเรียน</div><select value={form.term} onChange={e=>setForm(p=>({...p,term:e.target.value}))} style={sInp}><option value={1}>1</option><option value={2}>2</option></select></div><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ปี (พ.ศ.)</div><input type="number" value={form.year} onChange={e=>setForm(p=>({...p,year:e.target.value}))} style={sInp}/></div></div>
       <div style={{fontSize:12,color:C.muted,marginBottom:4}}>ห้องประจำชั้น</div><select value={form.homeroom} onChange={e=>setForm(p=>({...p,homeroom:e.target.value}))} style={{...sInp,fontFamily:'inherit'}}>{sortedCls.map(c=><option key={c} value={c}>{c}</option>)}</select></div>
     <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:4}}>🎯 จิตพิสัย (คาบเรียน)</div><div style={{fontSize:12,color:C.muted,marginBottom:10}}>ลา/กิจกรรม: +มา · -ขาด · 0=สาย</div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>มา (+)</div><input type="number" step="0.5" value={form.presentScore} onChange={e=>setForm(p=>({...p,presentScore:e.target.value}))} style={sInp}/></div><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ขาด (-)</div><input type="number" step="0.5" value={form.absentScore} onChange={e=>setForm(p=>({...p,absentScore:e.target.value}))} style={sInp}/></div></div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>สาย ทุก N</div><input type="number" value={form.lateGroup} onChange={e=>setForm(p=>({...p,lateGroup:e.target.value}))} style={sInp}/></div><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>หัก</div><input type="number" step="0.5" value={form.latePenalty} onChange={e=>setForm(p=>({...p,latePenalty:e.target.value}))} style={sInp}/></div></div></div>
     <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:8}}>🚨 มส. (เข้าเรียนต่ำกว่า %)</div><input type="number" value={form.minAttPct} onChange={e=>setForm(p=>({...p,minAttPct:e.target.value}))} style={sInp}/></div>
-    <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:8}}>🔐 รหัสผ่าน</div><input type="password" value={form.password} onChange={e=>setForm(p=>({...p,password:e.target.value}))} style={sInp} placeholder="เว้นว่าง = ไม่เปลี่ยน"/></div>
+    <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:8}}>🔐 รหัสผ่านครู</div><input type="password" value={form.password} onChange={e=>setForm(p=>({...p,password:e.target.value}))} style={sInp} placeholder="เว้นว่าง = ไม่เปลี่ยน"/></div>
     <button onClick={save} style={{...sBtn(true),width:'100%',padding:14,fontSize:16,marginBottom:12}}>💾 บันทึกการตั้งค่า</button>
     <button onClick={wipe} style={{width:'100%',padding:10,background:'#fff5f5',color:'#dc2626',border:'1px solid #fecaca',borderRadius:8,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>🗑 ล้างข้อมูลทั้งหมด</button></div>);}
 
 // ===== STUDENT APP =====
-function StudentApp({data,update,student,onLogout}){const[tab,setTab]=useState('scores');const[selSubjId,setSelSubjId]=useState(data.subjects[0]?.id||'');const[pinModal,setPinModal]=useState(false);const[pf,setPf]=useState({cur:'',n1:'',n2:''});const[pinErr,setPinErr]=useState('');
+function StudentApp({data,update,student,onLogout}){
+  const[tab,setTab]=useState('scores');
+  
+  // คัดกรองเฉพาะวิชาที่นักเรียนเรียน (มีข้อมูลการเข้าเรียนของห้องตัวเอง หรือ มีการให้คะแนนของห้องตัวเอง)
+  const enrolledSubjects = useMemo(() => {
+    return data.subjects.filter(subj => {
+      const hasAtt = data.attendance.some(a => a.type === 'class' && a.subjectId === subj.id && data.students.find(s=>s.id===a.studentId)?.classId === student.classId);
+      const hasScore = data.categories.some(c => c.subjectId === subj.id && data.scores.some(s => s.categoryId === c.id && data.students.find(x=>x.id===s.studentId)?.classId === student.classId));
+      return hasAtt || hasScore;
+    });
+  }, [data, student]);
+
+  const[selSubjId,setSelSubjId]=useState(enrolledSubjects[0]?.id||'');
+  const[pinModal,setPinModal]=useState(false);const[pf,setPf]=useState({cur:'',n1:'',n2:''});const[pinErr,setPinErr]=useState('');
+  
+  useEffect(() => {
+    if (enrolledSubjects.length > 0 && !enrolledSubjects.find(s => s.id === selSubjId)) {
+      setSelSubjId(enrolledSubjects[0].id);
+    }
+  }, [enrolledSubjects, selSubjId]);
+
   if(!student)return<div style={{padding:40,textAlign:'center',color:C.red}}>ไม่พบข้อมูล</div>; const isHomeroom = student.classId === data.homeroom;
-  const subj=data.subjects.find(s=>s.id===selSubjId);const cats=subj?data.categories.filter(c=>c.subjectId===subj.id):[];const mx=cats.reduce((s,c)=>s+getCatMax(c),0);const tot=cats.reduce((s,c)=>s+getCatScore(student.id,c,data.scores,data.term,data.year),0);const hasAny=cats.some(c=>hasCatScore(student.id,c,data.scores,data.term,data.year));
+  const subj=enrolledSubjects.find(s=>s.id===selSubjId);const cats=subj?data.categories.filter(c=>c.subjectId===subj.id):[];const mx=cats.reduce((s,c)=>s+getCatMax(c),0);const tot=cats.reduce((s,c)=>s+getCatScore(student.id,c,data.scores,data.term,data.year),0);const hasAny=cats.some(c=>hasCatScore(student.id,c,data.scores,data.term,data.year));
   const attRate=calcAttRate(student.id,data.attendance,'class',subj?.id);const morningRate=calcAttRate(student.id,data.attendance,'morning');
   const grade=hasAny&&subj?getSubjectGrade(student.id,subj,data.categories,data.scores,data.term,data.year,data.attendance,data.conduct):null;const conduct=calcConduct(student.id,data.attendance,data.conduct,subj?.id);
   const myAtt=data.attendance.filter(a=>a.studentId===student.id).sort((a,b)=>b.date.localeCompare(a.date));
@@ -325,17 +535,21 @@ function StudentApp({data,update,student,onLogout}){const[tab,setTab]=useState('
 </div>
     <div style={{padding:16}}>
       {tab==='scores'&&<div>
-        {data.subjects.length>1&&<select value={selSubjId} onChange={e=>setSelSubjId(e.target.value)} style={{...sInp,marginBottom:12,fontFamily:'inherit'}}>{data.subjects.map(s=><option key={s.id} value={s.id}>{s.code?`${s.code} ${s.name}`:s.name}</option>)}</select>}
-        {hasAny&&<div style={{...sCard,background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',textAlign:'center',marginBottom:12}}><div style={{fontSize:13,opacity:0.8}}>คะแนนรวม · {subj?.name}</div><div style={{fontSize:52,fontWeight:700,lineHeight:1.1,margin:'6px 0'}}>{tot}</div><div style={{fontSize:15,opacity:0.85}}>จาก {mx} ({mx>0?Math.round(tot/mx*100):0}%)</div>{grade&&<div style={{marginTop:10,background:'rgba(255,255,255,0.2)',display:'inline-block',padding:'5px 24px',borderRadius:24,fontSize:20,fontWeight:700}}>เกรด {grade.label}</div>}</div>}
-        {cats.map(cat=>{const cs=getCatScore(student.id,cat,data.scores,data.term,data.year);const cm=getCatMax(cat);const has=hasCatScore(student.id,cat,data.scores,data.term,data.year);return(<div key={cat.id} style={{...sCard,marginBottom:8}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:has?8:0}}><span style={{fontWeight:600,fontSize:15}}>{cat.name}</span><span style={{fontSize:16,fontWeight:700}}>{has?`${cs}/${cm}`:'-'}</span></div>{has&&cm>0&&<div style={{height:7,borderRadius:4,background:'#f3f4f6',overflow:'hidden'}}><div style={{height:'100%',width:`${(cs/cm)*100}%`,background:gradeColor(getGrade(cs,cm)),borderRadius:4}}/></div>}{cat.subs?.map(sub=>{const sr=data.scores.find(x=>x.studentId===student.id&&x.categoryId===cat.id&&x.subId===sub.id&&x.term===data.term&&x.year===data.year);return<div key={sub.id} style={{display:'flex',justifyContent:'space-between',fontSize:13,padding:'3px 0 3px 8px',borderTop:`1px dashed ${C.border}`}}><span style={{color:C.muted}}>{sub.name}{sub.date?` · ${fmtDate(sub.date)}`:''}</span><span style={{fontWeight:600}}>{sr?`${sr.score}/${sub.max}`:'-'}</span></div>;})}</div>);})}
+        {enrolledSubjects.length===0?<div style={{textAlign:'center',padding:40,color:C.muted}}>ยังไม่มีข้อมูลรายวิชาของคุณ</div>:<>
+          {enrolledSubjects.length>1&&<select value={selSubjId} onChange={e=>setSelSubjId(e.target.value)} style={{...sInp,marginBottom:12,fontFamily:'inherit'}}>{enrolledSubjects.map(s=><option key={s.id} value={s.id}>{s.code?`${s.code} ${s.name}`:s.name}</option>)}</select>}
+          {hasAny&&<div style={{...sCard,background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',textAlign:'center',marginBottom:12}}><div style={{fontSize:13,opacity:0.8}}>คะแนนรวม · {subj?.name}</div><div style={{fontSize:52,fontWeight:700,lineHeight:1.1,margin:'6px 0'}}>{tot}</div><div style={{fontSize:15,opacity:0.85}}>จาก {mx} ({mx>0?Math.round(tot/mx*100):0}%)</div>{grade&&<div style={{marginTop:10,background:'rgba(255,255,255,0.2)',display:'inline-block',padding:'5px 24px',borderRadius:24,fontSize:20,fontWeight:700}}>เกรด {grade.label}</div>}</div>}
+          {cats.map(cat=>{const cs=getCatScore(student.id,cat,data.scores,data.term,data.year);const cm=getCatMax(cat);const has=hasCatScore(student.id,cat,data.scores,data.term,data.year);return(<div key={cat.id} style={{...sCard,marginBottom:8}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:has?8:0}}><span style={{fontWeight:600,fontSize:15}}>{cat.name}</span><span style={{fontSize:16,fontWeight:700}}>{has?`${cs}/${cm}`:'-'}</span></div>{has&&cm>0&&<div style={{height:7,borderRadius:4,background:'#f3f4f6',overflow:'hidden'}}><div style={{height:'100%',width:`${(cs/cm)*100}%`,background:gradeColor(getGrade(cs,cm)),borderRadius:4}}/></div>}{cat.subs?.map(sub=>{const sr=data.scores.find(x=>x.studentId===student.id&&x.categoryId===cat.id&&x.subId===sub.id&&x.term===data.term&&x.year===data.year);return<div key={sub.id} style={{display:'flex',justifyContent:'space-between',fontSize:13,padding:'3px 0 3px 8px',borderTop:`1px dashed ${C.border}`}}><span style={{color:C.muted}}>{sub.name}{sub.date?` · ${fmtDate(sub.date)}`:''}</span><span style={{fontWeight:600}}>{sr?`${sr.score}/${sub.max}`:'-'}</span></div>;})}</div>);})}
+        </>}
       </div>}
       {tab==='att'&&<div>
-        {data.subjects.length>1&&<select value={selSubjId} onChange={e=>setSelSubjId(e.target.value)} style={{...sInp,marginBottom:12,fontFamily:'inherit'}}>{data.subjects.map(s=><option key={s.id} value={s.id}>{s.code?`${s.code} ${s.name}`:s.name}</option>)}</select>}
-        <div style={{...sCard,background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',textAlign:'center',marginBottom:12}}>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}><div style={{background:'rgba(255,255,255,0.15)',borderRadius:8,padding:10}}><div style={{fontSize:12,opacity:0.85}}>🌅 เข้าแถว</div><div style={{fontSize:28,fontWeight:700}}>{morningRate??'-'}%</div></div><div style={{background:'rgba(255,255,255,0.15)',borderRadius:8,padding:10}}><div style={{fontSize:12,opacity:0.85}}>📚 {subj?.code||'คาบ'}</div><div style={{fontSize:28,fontWeight:700}}>{attRate??'-'}%</div></div></div>
-          <div style={{fontSize:13}}>จิตพิสัย: <b>{conduct.score>0?'+':''}{conduct.score}</b></div>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:5,marginTop:8}}>{S_ORDER.map(k=><div key={k} style={{background:'rgba(255,255,255,0.15)',borderRadius:6,padding:'6px 4px'}}><div style={{fontSize:16,fontWeight:700}}>{conduct.counts[k]}</div><div style={{fontSize:11}}>{STATUS[k].label}</div></div>)}</div></div>
-        {myAtt.slice(0,60).map((a,i)=>{const sj=data.subjects.find(x=>x.id===a.subjectId);return<div key={i} style={{...sCard,marginBottom:5,padding:'10px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontSize:14,fontWeight:500}}>{fmtDate(a.date)}</div><div style={{fontSize:12,color:C.muted}}>{a.type==='morning'?'🌅 เข้าแถว':`📚 ${sj?.code||sj?.name||'คาบ'}${a.period?` คาบ${a.period}`:''}`}</div></div><span style={{background:STATUS[a.status]?.bg||'#999',color:'white',fontSize:13,padding:'4px 12px',borderRadius:20,fontWeight:600}}>{STATUS[a.status]?.label}{STATUS[a.status]?.custom&&a.customScore!==undefined?` (${a.customScore>0?'+':''}${a.customScore})`:''}</span></div>;})}
+        {enrolledSubjects.length===0?<div style={{textAlign:'center',padding:40,color:C.muted}}>ยังไม่มีข้อมูลการเข้าเรียน</div>:<>
+          {enrolledSubjects.length>1&&<select value={selSubjId} onChange={e=>setSelSubjId(e.target.value)} style={{...sInp,marginBottom:12,fontFamily:'inherit'}}>{enrolledSubjects.map(s=><option key={s.id} value={s.id}>{s.code?`${s.code} ${s.name}`:s.name}</option>)}</select>}
+          <div style={{...sCard,background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',textAlign:'center',marginBottom:12}}>
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}><div style={{background:'rgba(255,255,255,0.15)',borderRadius:8,padding:10}}><div style={{fontSize:12,opacity:0.85}}>🌅 เข้าแถว</div><div style={{fontSize:28,fontWeight:700}}>{morningRate??'-'}%</div></div><div style={{background:'rgba(255,255,255,0.15)',borderRadius:8,padding:10}}><div style={{fontSize:12,opacity:0.85}}>📚 {subj?.code||'คาบ'}</div><div style={{fontSize:28,fontWeight:700}}>{attRate??'-'}%</div></div></div>
+            <div style={{fontSize:13}}>จิตพิสัย: <b>{conduct.score>0?'+':''}{conduct.score}</b></div>
+            <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:5,marginTop:8}}>{S_ORDER.map(k=><div key={k} style={{background:'rgba(255,255,255,0.15)',borderRadius:6,padding:'6px 4px'}}><div style={{fontSize:16,fontWeight:700}}>{conduct.counts[k]}</div><div style={{fontSize:11}}>{STATUS[k].label}</div></div>)}</div></div>
+          {myAtt.slice(0,60).map((a,i)=>{const sj=data.subjects.find(x=>x.id===a.subjectId);return<div key={i} style={{...sCard,marginBottom:5,padding:'10px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontSize:14,fontWeight:500}}>{fmtDate(a.date)}</div><div style={{fontSize:12,color:C.muted}}>{a.type==='morning'?'🌅 เข้าแถว':`📚 ${sj?.code||sj?.name||'คาบ'}${a.period?` คาบ${a.period}`:''}`}</div></div><span style={{background:STATUS[a.status]?.bg||'#999',color:'white',fontSize:13,padding:'4px 12px',borderRadius:20,fontWeight:600}}>{STATUS[a.status]?.label}{STATUS[a.status]?.custom&&a.customScore!==undefined?` (${a.customScore>0?'+':''}${a.customScore})`:''}</span></div>;})}
+        </>}
       </div>}
       {tab==='homeroom' && isHomeroom && (
   <HomeroomPage
@@ -352,7 +566,7 @@ function StudentApp({data,update,student,onLogout}){const[tab,setTab]=useState('
 // ===== TEACHER SHELL =====
 function TeacherApp({data,update,onLogout}){const[page,setPage]=useState('home');const[drawerOpen,setDrawerOpen]=useState(false);const[fabOpen,setFabOpen]=useState(false);const[attInit,setAttInit]=useState(null);const[toastMsg,setToastMsg]=useState({msg:'',type:'info'});
   const toast=useCallback((msg,type='info')=>setToastMsg({msg,type}),[]);const openAtt=(type,classId)=>{setAttInit({type,classId});setPage('att');};useEffect(()=>{if(page!=='att')setAttInit(null);},[page]);const pageObj=NAV.find(n=>n.id===page);
-  return(<div style={{minHeight:'100vh',background:C.bg}}><TopBar onMenu={()=>setDrawerOpen(true)} onLogout={onLogout} label={pageObj?`${pageObj.icon} ${pageObj.label}`:''}/><Drawer open={drawerOpen} onClose={()=>setDrawerOpen(false)} current={page} onNav={setPage} data={data}/>
+  return(<div style={{minHeight:'100vh',background:C.bg}}><TopBar onMenu={()=>setDrawerOpen(true)} onLogout={onLogout} label={pageObj?`${pageObj.icon} ${pageObj.label}`:''} appName={data.appName||'ห้องเรียนของคุณครูต้นฝน'}/><Drawer open={drawerOpen} onClose={()=>setDrawerOpen(false)} current={page} onNav={setPage} data={data}/>
     {page==='home'&&<Dashboard data={data} setPage={setPage} openAtt={openAtt}/>}{page==='att'&&<AttendancePage data={data} update={update} initType={attInit?.type} initClass={attInit?.classId} toast={toast}/>}{page==='score'&&<ScoresPage data={data} update={update} toast={toast}/>}{page==='stu'&&<StudentsPage data={data} update={update} toast={toast}/>}{page==='stat'&&<StatsPage data={data}/>}{page==='io'&&<IOPage data={data} update={update} toast={toast}/>}{page==='homeroom'&&<HomeroomPage data={data} update={update} role="teacher" currentStudentId={null} toast={toast}/>}{page==='set'&&<SettingsPage data={data} update={update} toast={toast}/>}
     <button onClick={()=>setFabOpen(true)} style={{position:'fixed',bottom:24,right:20,width:58,height:58,borderRadius:30,background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',border:'none',fontSize:28,cursor:'pointer',boxShadow:'0 6px 20px rgba(192,57,43,0.45)',zIndex:40,display:'flex',alignItems:'center',justifyContent:'center'}}>+</button>
     <Sheet open={fabOpen} title="➕ เพิ่มรายการ" onClose={()=>setFabOpen(false)}><div style={{display:'flex',flexDirection:'column',gap:8}}><button onClick={()=>{setFabOpen(false);openAtt('morning',data.homeroom);}} style={{padding:'14px 16px',background:'linear-gradient(135deg,#0891b2,#0e7490)',color:'white',border:'none',borderRadius:12,cursor:'pointer',textAlign:'left',fontFamily:'inherit'}}><div style={{fontWeight:700,fontSize:15}}>🌅 เช็คชื่อเข้าแถว</div><div style={{fontSize:12,opacity:0.85}}>{data.homeroom}</div></button><button onClick={()=>{setFabOpen(false);openAtt('class');}} style={{padding:'14px 16px',background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',border:'none',borderRadius:12,cursor:'pointer',textAlign:'left',fontFamily:'inherit'}}><div style={{fontWeight:700,fontSize:15}}>📚 เช็คชื่อคาบเรียน</div><div style={{fontSize:12,opacity:0.85}}>เลือกวิชา + คาบ</div></button><button onClick={()=>{setFabOpen(false);setPage('score');}} style={{padding:'14px 16px',background:'linear-gradient(135deg,#d97706,#b45309)',color:'white',border:'none',borderRadius:12,cursor:'pointer',textAlign:'left',fontFamily:'inherit'}}><div style={{fontWeight:700,fontSize:15}}>📊 บันทึกคะแนน</div></button><button onClick={()=>{setFabOpen(false);setPage('stu');}} style={{padding:'14px 16px',background:C.light,color:C.text,border:`1.5px solid ${C.border}`,borderRadius:12,cursor:'pointer',textAlign:'left',fontFamily:'inherit'}}><div style={{fontWeight:700,fontSize:15}}>👤 เพิ่มนักเรียน</div></button></div></Sheet>
@@ -361,7 +575,24 @@ function TeacherApp({data,update,onLogout}){const[page,setPage]=useState('home')
 // ===== MAIN =====
 export default function App(){
   const { data, loading, update } = useFirestore();
-  const [user, setUser] = useState(null);
+  
+  // 1. ดึงข้อมูลการล็อกอินเดิมจาก localStorage (ถ้ามี)
+  const [user, setUser] = useState(() => {
+    const saved = localStorage.getItem('chinese_app_user');
+    return saved ? JSON.parse(saved) : null;
+  });
+
+  // 2. ฟังก์ชันจัดการล็อกอิน (บันทึกลง localStorage ด้วย)
+  const handleLogin = (userData) => {
+    setUser(userData);
+    localStorage.setItem('chinese_app_user', JSON.stringify(userData));
+  };
+
+  // 3. ฟังก์ชันจัดการล็อกเอาท์ (ลบออกจาก localStorage)
+  const handleLogout = () => {
+    setUser(null);
+    localStorage.removeItem('chinese_app_user');
+  };
 
   useEffect(()=>{
     const l=document.createElement('link');l.rel='stylesheet';l.href='https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap';document.head.appendChild(l);
@@ -370,7 +601,16 @@ export default function App(){
 
   if(loading)return<div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100vh',background:C.bg}}><div style={{fontSize:64,color:C.red}}>中</div><div style={{color:C.muted,marginTop:12}}>กำลังเชื่อมต่อฐานข้อมูล...</div></div>;
   if(!data)return <div style={{padding:40,textAlign:'center',color:C.red}}>ข้อผิดพลาด: ไม่สามารถโหลดข้อมูลจาก Firebase ได้</div>;
-  if(!user)return<LoginScreen data={data} onLogin={setUser}/>;
-  if(user.role==='teacher')return<TeacherApp data={data} update={update} onLogout={()=>setUser(null)}/>;
-  return<StudentApp data={data} update={update} student={data.students.find(s=>s.id===user.id)} onLogout={()=>setUser(null)}/>;
+  if(!user)return<LoginScreen data={data} onLogin={handleLogin}/>; // ส่ง handleLogin ไปแทน setUser
+  
+  if(user.role==='teacher')return<TeacherApp data={data} update={update} onLogout={handleLogout}/>;
+  
+  // 4. เช็คกรณีนักเรียนล็อกอินค้างไว้แต่ถูกลบชื่อออกจากระบบไปแล้ว ให้บังคับเด้งออก
+  const studentData = data.students.find(s=>s.id===user.id);
+  if (!studentData) {
+    handleLogout();
+    return null;
+  }
+  
+  return<StudentApp data={data} update={update} student={studentData} onLogout={handleLogout}/>;
 }
