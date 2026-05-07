@@ -339,33 +339,66 @@ function HomeroomPage({ data, update, role, currentStudentId, toast }) {
       </div>
 
       {tab === 'profile' && (
-        <div style={sCard}>
-          <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12}}>
-            <div style={{fontWeight:600, fontSize:15}}>ข้อมูลติดต่อ / ผู้ปกครอง</div>
-            {!editMode ? <button onClick={()=>{setProfileForm({...actProfile}); setEditMode(true);}} style={{...sBtn(false,true), fontSize:12}}>✏️ แก้ไข</button>
-                      : <button onClick={saveProfile} style={{...sBtn(true,true), fontSize:12}}>💾 บันทึก</button>}
+        <div style={{display:'flex', flexDirection:'column', gap:12}}>
+          <div style={sCard}>
+            <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12}}>
+              <div style={{fontWeight:600, fontSize:15}}>ข้อมูลประวัตินักเรียน</div>
+              {!editMode ? <button onClick={()=>{setProfileForm({...actProfile}); setEditMode(true);}} style={{...sBtn(false,true), fontSize:12}}>✏️ แก้ไข</button>
+                        : <button onClick={saveProfile} style={{...sBtn(true,true), fontSize:12}}>💾 บันทึก</button>}
+            </div>
+            
+            <div style={{fontWeight:600, fontSize:13, color:C.red, borderBottom:`1px solid ${C.border}`, paddingBottom:4, marginBottom:10}}>👤 ข้อมูลส่วนตัว</div>
+            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:16}}>
+               <div>
+                  <div style={{fontSize:12, color:C.muted, marginBottom:2}}>วัน/เดือน/ปีเกิด</div>
+                  {editMode ? <input type="date" value={profileForm.dob||''} onChange={e=>setProfileForm(p=>({...p, dob:e.target.value}))} style={sInp}/> : <div style={{fontWeight:500}}>{actProfile.dob ? fmtDate(actProfile.dob) : '-'}</div>}
+               </div>
+               <div>
+                  <div style={{fontSize:12, color:C.muted, marginBottom:2}}>กรุ๊ปเลือด</div>
+                  {editMode ? <select value={profileForm.bloodType||''} onChange={e=>setProfileForm(p=>({...p, bloodType:e.target.value}))} style={sInp}><option value="">-</option><option value="A">A</option><option value="B">B</option><option value="AB">AB</option><option value="O">O</option></select> : <div style={{fontWeight:500}}>{actProfile.bloodType || '-'}</div>}
+               </div>
+               <div style={{gridColumn:'1 / -1'}}>
+                  <div style={{fontSize:12, color:C.muted, marginBottom:2}}>เบอร์โทรศัพท์ (นักเรียน)</div>
+                  {editMode ? <input type="tel" value={profileForm.studentPhone||''} onChange={e=>setProfileForm(p=>({...p, studentPhone:e.target.value}))} style={sInp}/> : <div style={{fontWeight:500}}>{actProfile.studentPhone || '-'}</div>}
+               </div>
+            </div>
+
+            <div style={{fontWeight:600, fontSize:13, color:C.red, borderBottom:`1px solid ${C.border}`, paddingBottom:4, marginBottom:10}}>👨‍👩‍👧 ข้อมูลผู้ปกครองและการติดต่อ</div>
+            <div style={{display:'grid', gridTemplateColumns:'1fr 1fr', gap:10, marginBottom:16}}>
+              <div style={{gridColumn:'1 / -1'}}>
+                <div style={{fontSize:12, color:C.muted, marginBottom:2}}>ชื่อ-สกุล ผู้ปกครอง</div>
+                {editMode ? <input value={profileForm.parentName||''} onChange={e=>setProfileForm(p=>({...p, parentName:e.target.value}))} style={sInp}/> : <div style={{fontWeight:500}}>{actProfile.parentName || '-'}</div>}
+              </div>
+              <div>
+                <div style={{fontSize:12, color:C.muted, marginBottom:2}}>ความสัมพันธ์</div>
+                {editMode ? <input value={profileForm.parentRelation||''} onChange={e=>setProfileForm(p=>({...p, parentRelation:e.target.value}))} style={sInp} placeholder="เช่น บิดา, มารดา"/> : <div style={{fontWeight:500}}>{actProfile.parentRelation || '-'}</div>}
+              </div>
+              <div>
+                <div style={{fontSize:12, color:C.muted, marginBottom:2}}>เบอร์โทรศัพท์ (ติดต่อฉุกเฉิน)</div>
+                {editMode ? <input type="tel" value={profileForm.phone||''} onChange={e=>setProfileForm(p=>({...p, phone:e.target.value}))} style={sInp}/> : <div style={{fontWeight:500}}>{actProfile.phone || '-'}</div>}
+              </div>
+              <div style={{gridColumn:'1 / -1'}}>
+                <div style={{fontSize:12, color:C.muted, marginBottom:2}}>ที่อยู่ปัจจุบัน</div>
+                {editMode ? <textarea rows="2" value={profileForm.address||''} onChange={e=>setProfileForm(p=>({...p, address:e.target.value}))} style={sInp}/> : <div style={{fontWeight:500}}>{actProfile.address || '-'}</div>}
+              </div>
+            </div>
+
+            <div style={{fontWeight:600, fontSize:13, color:C.red, borderBottom:`1px solid ${C.border}`, paddingBottom:4, marginBottom:10}}>🏥 สุขภาพและการเดินทาง</div>
+            <div style={{display:'grid', gap:10}}>
+              <div>
+                <div style={{fontSize:12, color:C.muted, marginBottom:2}}>โรคประจำตัว / แพ้ยา / แพ้อาหาร</div>
+                {editMode ? <textarea rows="2" value={profileForm.note||''} onChange={e=>setProfileForm(p=>({...p, note:e.target.value}))} style={sInp} placeholder="หากไม่มีให้ขีด -"/> : <div style={{fontWeight:500, color: actProfile.note ? C.red : C.text}}>{actProfile.note || '-'}</div>}
+              </div>
+              <div>
+                <div style={{fontSize:12, color:C.muted, marginBottom:2}}>วิธีเดินทางมาโรงเรียน</div>
+                {editMode ? <input value={profileForm.commute||''} onChange={e=>setProfileForm(p=>({...p, commute:e.target.value}))} style={sInp} placeholder="เช่น รถรับส่ง, ผู้ปกครองมาส่ง"/> : <div style={{fontWeight:500}}>{actProfile.commute || '-'}</div>}
+              </div>
+            </div>
+
+            {editMode && (
+              <button onClick={()=>setEditMode(false)} style={{...sBtn(false), width:'100%', marginTop:14}}>ยกเลิกการแก้ไข</button>
+            )}
           </div>
-          <div style={{display:'grid', gap:10}}>
-            <div>
-              <div style={{fontSize:12, color:C.muted, marginBottom:2}}>ชื่อ-สกุล ผู้ปกครอง</div>
-              {editMode ? <input value={profileForm.parentName||''} onChange={e=>setProfileForm(p=>({...p, parentName:e.target.value}))} style={sInp}/> : <div style={{fontWeight:500}}>{actProfile.parentName || '-'}</div>}
-            </div>
-            <div>
-              <div style={{fontSize:12, color:C.muted, marginBottom:2}}>เบอร์โทรศัพท์ (ติดต่อฉุกเฉิน)</div>
-              {editMode ? <input type="tel" value={profileForm.phone||''} onChange={e=>setProfileForm(p=>({...p, phone:e.target.value}))} style={sInp}/> : <div style={{fontWeight:500}}>{actProfile.phone || '-'}</div>}
-            </div>
-            <div>
-              <div style={{fontSize:12, color:C.muted, marginBottom:2}}>ที่อยู่ / ข้อมูลการเดินทาง</div>
-              {editMode ? <textarea rows="3" value={profileForm.address||''} onChange={e=>setProfileForm(p=>({...p, address:e.target.value}))} style={sInp}/> : <div style={{fontWeight:500}}>{actProfile.address || '-'}</div>}
-            </div>
-            <div>
-              <div style={{fontSize:12, color:C.muted, marginBottom:2}}>โรคประจำตัว / หมายเหตุอื่นๆ</div>
-              {editMode ? <textarea rows="2" value={profileForm.note||''} onChange={e=>setProfileForm(p=>({...p, note:e.target.value}))} style={sInp}/> : <div style={{fontWeight:500, color: actProfile.note ? C.red : C.text}}>{actProfile.note || '-'}</div>}
-            </div>
-          </div>
-          {editMode && (
-            <button onClick={()=>setEditMode(false)} style={{...sBtn(false), width:'100%', marginTop:14}}>ยกเลิกการแก้ไข</button>
-          )}
         </div>
       )}
 
@@ -641,10 +674,15 @@ function IOPage({data,update,toast}){
                 'เลขที่': s.number || '',
                 'รหัส': s.id,
                 'ชื่อ-สกุล': s.name,
+                'วันเกิด': p.dob || '',
+                'กรุ๊ปเลือด': p.bloodType || '',
+                'เบอร์นักเรียน': p.studentPhone || '',
                 'ชื่อผู้ปกครอง': p.parentName || '',
-                'เบอร์ติดต่อ': p.phone || '',
+                'ความสัมพันธ์': p.parentRelation || '',
+                'เบอร์ผู้ปกครอง': p.phone || '',
                 'ที่อยู่': p.address || '',
-                'หมายเหตุ/โรคประจำตัว': p.note || ''
+                'การเดินทาง': p.commute || '',
+                'โรคประจำตัว/แพ้อาหาร': p.note || ''
             };
         });
         XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{}]), safeSheetName(`ข้อมูลส่วนตัว ${data.homeroom}`));
