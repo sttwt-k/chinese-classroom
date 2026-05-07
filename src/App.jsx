@@ -320,7 +320,7 @@ function HomeroomPage({ data, update, role, currentStudentId, toast }) {
           <div style={{width:72, height:72, borderRadius:36, background:C.light, border:`2px solid ${C.red}`, display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden'}}>
              {actProfile.profilePhoto ? <img src={actProfile.profilePhoto} alt="profile" style={{width:'100%', height:'100%', objectFit:'cover'}}/> : <span style={{fontSize:24}}>👤</span>}
           </div>
-          {isTeacher && editMode && (
+          {editMode && (
              <label style={{position:'absolute', bottom:-4, right:-4, background:C.red, color:'white', width:28, height:28, borderRadius:14, display:'flex', alignItems:'center', justifyContent:'center', cursor:'pointer', fontSize:14, border:'2px solid white'}}>
                📷
                <input type="file" accept="image/*" onChange={handlePhotoUpload} style={{display:'none'}} />
@@ -342,10 +342,8 @@ function HomeroomPage({ data, update, role, currentStudentId, toast }) {
         <div style={sCard}>
           <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:12}}>
             <div style={{fontWeight:600, fontSize:15}}>ข้อมูลติดต่อ / ผู้ปกครอง</div>
-            {isTeacher && (
-              !editMode ? <button onClick={()=>{setProfileForm({...actProfile}); setEditMode(true);}} style={{...sBtn(false,true), fontSize:12}}>✏️ แก้ไข</button>
-                        : <button onClick={saveProfile} style={{...sBtn(true,true), fontSize:12}}>💾 บันทึก</button>
-            )}
+            {!editMode ? <button onClick={()=>{setProfileForm({...actProfile}); setEditMode(true);}} style={{...sBtn(false,true), fontSize:12}}>✏️ แก้ไข</button>
+                      : <button onClick={saveProfile} style={{...sBtn(true,true), fontSize:12}}>💾 บันทึก</button>}
           </div>
           <div style={{display:'grid', gap:10}}>
             <div>
@@ -365,7 +363,7 @@ function HomeroomPage({ data, update, role, currentStudentId, toast }) {
               {editMode ? <textarea rows="2" value={profileForm.note||''} onChange={e=>setProfileForm(p=>({...p, note:e.target.value}))} style={sInp}/> : <div style={{fontWeight:500, color: actProfile.note ? C.red : C.text}}>{actProfile.note || '-'}</div>}
             </div>
           </div>
-          {isTeacher && editMode && (
+          {editMode && (
             <button onClick={()=>setEditMode(false)} style={{...sBtn(false), width:'100%', marginTop:14}}>ยกเลิกการแก้ไข</button>
           )}
         </div>
@@ -626,11 +624,12 @@ function IOPage({data,update,toast}){
     try{
       const XLSX=await import('xlsx');
       const wb=XLSX.utils.book_new();
+      const safeSheetName = (name) => name.replace(/[\\/?*[\]]/g, '-').substring(0, 31);
       
       // 1. นักเรียนทั้งหมด
       if(exportSections.students){
         const rows=data.students.sort((a,b)=>(a.number||999)-(b.number||999)).map(s=>({'เลขที่':s.number||'','รหัส':s.id,'ชื่อ-สกุล':s.name,'ชื่อเล่น':s.nickname||'','ชื่อภาษาจีน':s.chineseName||'','ห้อง':s.classId,'PIN':s.pin}));
-        XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows.length?rows:[{}]),'นักเรียนทั้งหมด');
+        XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows.length?rows:[{}]),safeSheetName('นักเรียนทั้งหมด'));
       }
       
       // 2. ข้อมูลส่วนตัวประจำชั้น
@@ -648,7 +647,7 @@ function IOPage({data,update,toast}){
                 'หมายเหตุ/โรคประจำตัว': p.note || ''
             };
         });
-        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{}]), `ข้อมูลส่วนตัว ${data.homeroom}`);
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{}]), safeSheetName(`ข้อมูลส่วนตัว ${data.homeroom}`));
       }
       
       // 3. สรุปการออมเงินประจำชั้น
@@ -683,23 +682,23 @@ function IOPage({data,update,toast}){
                  'ยอดคงเหลือ (บาท)': totalBal
              });
         }
-        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{}]), `สรุปออมเงิน ${data.homeroom}`);
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows.length ? rows : [{}]), safeSheetName(`สรุปออมเงิน ${data.homeroom}`));
       }
       
       // 4. เข้าแถว
       if(exportSections.morningAtt){
         const rows=data.attendance.filter(a=>a.type==='morning').sort((a,b)=>a.date.localeCompare(b.date)).map(a=>{const s=data.students.find(x=>x.id===a.studentId);return{'วันที่':a.date,'รหัส':a.studentId,'เลขที่':s?.number||'','ชื่อ':s?.name||'','ห้อง':s?.classId||'','สถานะ':STATUS[a.status]?.label||a.status,'หมายเหตุ':a.note||''};});
-        XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows.length?rows:[{}]),'เข้าแถว');
+        XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows.length?rows:[{}]),safeSheetName('เข้าแถว'));
       }
       
       // 5. คาบเรียน
       if(exportSections.classAtt){
-        data.subjects.filter(s=>exportSubjs[s.id]).forEach(subj=>{const rows=data.attendance.filter(a=>a.type==='class'&&a.subjectId===subj.id).sort((a,b)=>a.date.localeCompare(b.date)).map(a=>{const s=data.students.find(x=>x.id===a.studentId);return{'วันที่':a.date,'คาบ':a.period||'','รหัส':a.studentId,'เลขที่':s?.number||'','ชื่อ':s?.name||'','ห้อง':s?.classId||'','สถานะ':STATUS[a.status]?.label||a.status,'คะแนน':a.customScore??''};});const shName=(`คาบ ${subj.code||subj.name}`).slice(0,31);XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows.length?rows:[{}]),shName);});
+        data.subjects.filter(s=>exportSubjs[s.id]).forEach(subj=>{const rows=data.attendance.filter(a=>a.type==='class'&&a.subjectId===subj.id).sort((a,b)=>a.date.localeCompare(b.date)).map(a=>{const s=data.students.find(x=>x.id===a.studentId);return{'วันที่':a.date,'คาบ':a.period||'','รหัส':a.studentId,'เลขที่':s?.number||'','ชื่อ':s?.name||'','ห้อง':s?.classId||'','สถานะ':STATUS[a.status]?.label||a.status,'คะแนน':a.customScore??''};});const shName=safeSheetName(`คาบ ${subj.code||subj.name}`);XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows.length?rows:[{}]),shName);});
       }
       
       // 6. คะแนน
       if(exportSections.scores){
-        data.subjects.filter(s=>exportSubjs[s.id]).forEach(subj=>{const sCats=data.categories.filter(c=>c.subjectId===subj.id);const rows=data.students.sort((a,b)=>(a.number||999)-(b.number||999)).map(s=>{const row={'เลขที่':s.number||'','รหัส':s.id,'ชื่อ':s.name,'ห้อง':s.classId};sCats.forEach(c=>{const k=`${c.name}(${getCatMax(c)})`;row[k]=getCatScore(s.id,c,data.scores,data.term,data.year)||'';});const mx=sCats.reduce((t,c)=>t+getCatMax(c),0);const tot=sCats.reduce((t,c)=>t+getCatScore(s.id,c,data.scores,data.term,data.year),0);const has=sCats.some(c=>hasCatScore(s.id,c,data.scores,data.term,data.year));row['รวม']=has?tot:'';row['เกรด']=has?(getSubjectGrade(s.id,subj,data.categories,data.scores,data.term,data.year,data.attendance,data.conduct)?.label||''):'' ;return row;});const shName=(`คะแนน ${subj.code||subj.name}`).slice(0,31);XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),[shName][0]);});
+        data.subjects.filter(s=>exportSubjs[s.id]).forEach(subj=>{const sCats=data.categories.filter(c=>c.subjectId===subj.id);const rows=data.students.sort((a,b)=>(a.number||999)-(b.number||999)).map(s=>{const row={'เลขที่':s.number||'','รหัส':s.id,'ชื่อ':s.name,'ห้อง':s.classId};sCats.forEach(c=>{const k=`${c.name}(${getCatMax(c)})`;row[k]=getCatScore(s.id,c,data.scores,data.term,data.year)||'';});const mx=sCats.reduce((t,c)=>t+getCatMax(c),0);const tot=sCats.reduce((t,c)=>t+getCatScore(s.id,c,data.scores,data.term,data.year),0);const has=sCats.some(c=>hasCatScore(s.id,c,data.scores,data.term,data.year));row['รวม']=has?tot:'';row['เกรด']=has?(getSubjectGrade(s.id,subj,data.categories,data.scores,data.term,data.year,data.attendance,data.conduct)?.label||''):'' ;return row;});const shName=safeSheetName(`คะแนน ${subj.code||subj.name}`);XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(rows),[shName][0]);});
       }
       
       XLSX.writeFile(wb,`chinese-class-${data.term}-${data.year}-${todayStr()}.xlsx`);
