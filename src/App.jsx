@@ -1,4 +1,5 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useFirestore, initData } from "./useFirestore";
 
 // ===== CONSTANTS =====
 const DEFAULT_CLASSES=['ม.1/1','ม.1/2','ม.1/3','ม.2/1','ม.2/2','ม.2/3','ม.3/1','ม.3/2','ม.3/3','ม.4/1','ม.4/2','ม.4/3','ม.5/1','ม.5/2','ม.5/3','ม.6/1','ม.6/2','ม.6/3'];
@@ -32,15 +33,6 @@ const sortClasses=cls=>[...cls].sort((a,b)=>{const p=c=>{const m=c.match(/ม\.(
 const subjLabel=s=>s?`${s.code||s.name}${s.code?' '+s.name:''}`:'-';
 const subjShort=s=>s?`${s.code||''} ${s.name}`.trim():'-';
 const dateInRange=(ds,range)=>{if(range==='term')return true;const d=new Date(ds+'T00:00:00'),now=new Date();now.setHours(0,0,0,0);if(range==='today')return ds===todayStr();if(range==='week'){const w=new Date(now);w.setDate(w.getDate()-7);return d>=w;}if(range==='month'){const m=new Date(now);m.setDate(m.getDate()-30);return d>=m;}return true;};
-
-// ===== STORAGE =====
-const SK='chTeacher_v4';
-const loadData=async()=>{try{const r=await window.storage.get(SK);return r?JSON.parse(r.value):null;}catch{return null;}};
-const saveData=async d=>{try{await window.storage.set(SK,JSON.stringify(d));}catch{}};
-const initData=()=>({password:'0000',homeroom:'ม.5/2',classes:[...DEFAULT_CLASSES],
-  subjects:[{id:'sub_chinese',name:'ภาษาจีน',code:'จ20201',credits:1.0}],students:[],attendance:[],scores:[],
-  categories:[{id:'hw',name:'การบ้าน',subjectId:'sub_chinese',max:20,subs:[]},{id:'mid',name:'กลางภาค',subjectId:'sub_chinese',max:30,subs:[]},{id:'final',name:'ปลายภาค',subjectId:'sub_chinese',max:40,subs:[]},{id:'proj',name:'งาน/โปรเจกต์',subjectId:'sub_chinese',max:10,subs:[]}],
-  conduct:CONDUCT_DEF,term:1,year:2568});
 
 // ===== STYLES =====
 const sCard={background:C.card,borderRadius:12,border:`1px solid ${C.border}`,padding:16,marginBottom:12};
@@ -105,7 +97,7 @@ function AttendancePage({data,update,initType,initClass,toast}){
       {tab==='morning'&&<div style={{fontSize:12,color:C.muted,marginTop:8}}>เข้าแถว <b style={{color:C.red}}>{data.homeroom}</b> · เก็บสถิติ ไม่นับคะแนน</div>}
     </div>
     {cls&&students.length>0&&(<><div style={{...sCard,padding:12}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:10,fontSize:12,fontWeight:600,flexWrap:'wrap',gap:6}}>{S_ORDER.map(k=><span key={k} style={{color:STATUS[k].bg}}>{STATUS[k].short} <b>{counted(k)}</b></span>)}</div><div style={{display:'flex',gap:6}}><button onClick={()=>markAll('present')} style={{flex:1,padding:7,borderRadius:6,border:'1px solid #16a34a',background:'#dcfce7',color:'#16a34a',fontSize:12,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>✓ มาทุกคน</button><button onClick={()=>markAll('absent')} style={{flex:1,padding:7,borderRadius:6,border:'1px solid #dc2626',background:'#fee2e2',color:'#dc2626',fontSize:12,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>✗ ขาดทุกคน</button></div></div>
-      {students.map((stu,i)=>{const rec=getRec(stu.id);return(<div key={stu.id} style={{...sCard,marginBottom:8,padding:'12px 14px'}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}><div><span style={{fontSize:12,color:C.muted,marginRight:6}}>{stu.number||i+1}.</span><span style={{fontWeight:600,fontSize:15}}>{stu.nickname||stu.name}</span><span style={{fontSize:12,color:C.muted,marginLeft:6}}>{stu.id}</span></div>{rec&&<span style={{background:STATUS[rec.status].bg,color:'white',fontSize:12,padding:'3px 10px',borderRadius:12,fontWeight:600}}>{STATUS[rec.status].label}{STATUS[rec.status]?.custom&&rec.customScore!==undefined?` (${rec.customScore>0?'+':''}${rec.customScore})`:''}</span>}</div><div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:5}}>{S_ORDER.map(k=>{const a=rec?.status===k;return<button key={k} onClick={()=>setStatus(stu.id,k)} style={{padding:'7px 4px',borderRadius:6,border:`1.5px solid ${a?STATUS[k].bg:'#e5e7eb'}`,background:a?STATUS[k].bg:'white',color:a?'white':'#9ca3af',fontSize:12,fontWeight:a?700:500,cursor:'pointer',fontFamily:'inherit'}}>{STATUS[k].label}</button>;})}}</div>);})}</>)}
+      {students.map((stu,i)=>{const rec=getRec(stu.id);return(<div key={stu.id} style={{...sCard,marginBottom:8,padding:'12px 14px'}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}><div><span style={{fontSize:12,color:C.muted,marginRight:6}}>{stu.number||i+1}.</span><span style={{fontWeight:600,fontSize:15}}>{stu.nickname||stu.name}</span><span style={{fontSize:12,color:C.muted,marginLeft:6}}>{stu.id}</span></div>{rec&&<span style={{background:STATUS[rec.status].bg,color:'white',fontSize:12,padding:'3px 10px',borderRadius:12,fontWeight:600}}>{STATUS[rec.status].label}{STATUS[rec.status]?.custom&&rec.customScore!==undefined?` (${rec.customScore>0?'+':''}${rec.customScore})`:''}</span>}</div><div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:5}}>{S_ORDER.map(k=>{const a=rec?.status===k;return<button key={k} onClick={()=>setStatus(stu.id,k)} style={{padding:'7px 4px',borderRadius:6,border:`1.5px solid ${a?STATUS[k].bg:'#e5e7eb'}`,background:a?STATUS[k].bg:'white',color:a?'white':'#9ca3af',fontSize:12,fontWeight:a?700:500,cursor:'pointer',fontFamily:'inherit'}}>{STATUS[k].label}</button>;})}</div></div>);})}</>)}
     {!cls&&tab==='class'&&<div style={{textAlign:'center',color:C.muted,padding:48}}>📋 เลือกวิชาและห้องเรียน</div>}
     <Sheet open={!!scoreModal} title={scoreModal?`📝 ${STATUS[scoreModal.status]?.label} — คะแนนจิตพิสัย`:''} onClose={()=>setScoreModal(null)}>{scoreModal&&<div><div style={{fontSize:12,color:C.muted,marginBottom:6}}>+เท่ากับมา · -เท่ากับขาด · 0เท่ากับสาย</div><input type="number" step="0.5" value={scoreModal.customScore} onChange={e=>setScoreModal(p=>({...p,customScore:parseFloat(e.target.value)||0}))} style={{...sInp,marginBottom:10,fontSize:18,fontWeight:700,textAlign:'center'}} autoFocus/><div style={{display:'flex',gap:6,marginBottom:14}}>{[-1,-0.5,0,0.5,1].map(n=><button key={n} onClick={()=>setScoreModal(p=>({...p,customScore:n}))} style={{flex:1,padding:8,borderRadius:6,border:`1.5px solid ${scoreModal.customScore===n?C.red:C.border}`,background:scoreModal.customScore===n?C.red:'white',color:scoreModal.customScore===n?'white':C.text,cursor:'pointer',fontFamily:'inherit',fontSize:13,fontWeight:600}}>{n>0?'+':''}{n}</button>)}</div><input value={scoreModal.note||''} onChange={e=>setScoreModal(p=>({...p,note:e.target.value}))} style={{...sInp,marginBottom:14}} placeholder="หมายเหตุ"/><div style={{display:'flex',gap:8}}><button onClick={()=>setScoreModal(null)} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={()=>{saveStatus(scoreModal.studentId,scoreModal.status,scoreModal.customScore,scoreModal.note);setScoreModal(null);}} style={{...sBtn(true),flex:1}}>บันทึก</button></div></div>}</Sheet></div>);}
 
@@ -349,14 +341,18 @@ function TeacherApp({data,update,onLogout}){const[page,setPage]=useState('home')
     <Toast msg={toastMsg.msg} type={toastMsg.type} onClose={()=>setToastMsg({msg:'',type:'info'})}/></div>);}
 
 // ===== MAIN =====
-export default function App(){const[data,setData]=useState(null);const[loading,setLoading]=useState(true);const[user,setUser]=useState(null);
-  useEffect(()=>{const l=document.createElement('link');l.rel='stylesheet';l.href='https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap';document.head.appendChild(l);document.body.style.fontFamily='Sarabun, sans-serif';
-    loadData().then(d=>{if(d){d.classes=sortClasses(d.classes||[...DEFAULT_CLASSES]);d.homeroom=d.homeroom||'ม.5/2';d.conduct=d.conduct||CONDUCT_DEF;d.subjects=d.subjects||initData().subjects;
-      d.students=(d.students||[]).map(s=>({...s,nickname:s.nickname||'',chineseName:s.chineseName||'',number:s.number||null,pin:/^\d{4}$/.test(s.pin)?s.pin:randomPin()}));d.categories=(d.categories||[]).map(c=>({...c,subs:c.subs||[],subjectId:c.subjectId||d.subjects?.[0]?.id||''}));}
-      setData(d||initData());setLoading(false);}).catch(()=>{setData(initData());setLoading(false);});
+export default function App(){
+  const { data, loading, update } = useFirestore();
+  const [user, setUser] = useState(null);
+
+  useEffect(()=>{
+    const l=document.createElement('link');l.rel='stylesheet';l.href='https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap';document.head.appendChild(l);
+    document.body.style.fontFamily='Sarabun, sans-serif';
   },[]);
-  const update=useCallback(fn=>{setData(prev=>{const next=fn(prev);saveData(next);return next;});},[]);
-  if(loading)return<div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100vh',background:C.bg}}><div style={{fontSize:64,color:C.red}}>中</div><div style={{color:C.muted,marginTop:12}}>กำลังโหลด...</div></div>;
-  if(!data)return null;if(!user)return<LoginScreen data={data} onLogin={setUser}/>;
+
+  if(loading)return<div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100vh',background:C.bg}}><div style={{fontSize:64,color:C.red}}>中</div><div style={{color:C.muted,marginTop:12}}>กำลังเชื่อมต่อฐานข้อมูล...</div></div>;
+  if(!data)return <div style={{padding:40,textAlign:'center',color:C.red}}>ข้อผิดพลาด: ไม่สามารถโหลดข้อมูลจาก Firebase ได้</div>;
+  if(!user)return<LoginScreen data={data} onLogin={setUser}/>;
   if(user.role==='teacher')return<TeacherApp data={data} update={update} onLogout={()=>setUser(null)}/>;
-  return<StudentApp data={data} update={update} student={data.students.find(s=>s.id===user.id)} onLogout={()=>setUser(null)}/>;}
+  return<StudentApp data={data} update={update} student={data.students.find(s=>s.id===user.id)} onLogout={()=>setUser(null)}/>;
+}
