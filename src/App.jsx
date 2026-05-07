@@ -1,26 +1,19 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import * as XLSX from "xlsx";
-import { useFirestore, initData } from "./useFirestore";
 
 // ===== CONSTANTS =====
 const DEFAULT_CLASSES = ['ม.1/1','ม.1/2','ม.1/3','ม.2/1','ม.2/2','ม.2/3','ม.3/1','ม.3/2','ม.3/3','ม.4/1','ม.4/2','ม.4/3','ม.5/1','ม.5/2','ม.5/3','ม.6/1','ม.6/2','ม.6/3'];
 const STATUS = {
-  present:  { label:'มา', short:'มา', bg:'#16a34a' },
-  absent:   { label:'ขาด', short:'ขาด', bg:'#dc2626' },
-  late:     { label:'สาย', short:'สาย', bg:'#d97706' },
-  leave_p:  { label:'ลากิจ', short:'ลก', bg:'#0891b2', custom:true },
-  leave_s:  { label:'ลาป่วย', short:'ลป', bg:'#2563eb', custom:true },
-  activity: { label:'กิจกรรม', short:'กจ', bg:'#7c3aed', custom:true },
+  present:{label:'มา',short:'มา',bg:'#16a34a'},absent:{label:'ขาด',short:'ขาด',bg:'#dc2626'},
+  late:{label:'สาย',short:'สาย',bg:'#d97706'},leave_p:{label:'ลากิจ',short:'ลก',bg:'#0891b2',custom:true},
+  leave_s:{label:'ลาป่วย',short:'ลป',bg:'#2563eb',custom:true},activity:{label:'กิจกรรม',short:'กจ',bg:'#7c3aed',custom:true},
 };
 const S_ORDER = ['present','absent','late','leave_p','leave_s','activity'];
-const GRADE_SCALE = [
-  {label:'4',min:80,gpa:4},{label:'3.5',min:75,gpa:3.5},{label:'3',min:70,gpa:3},
-  {label:'2.5',min:65,gpa:2.5},{label:'2',min:60,gpa:2},{label:'1.5',min:55,gpa:1.5},
-  {label:'1',min:50,gpa:1},{label:'0',min:0,gpa:0},
-];
+const GRADE_SCALE = [{label:'4',min:80,gpa:4},{label:'3.5',min:75,gpa:3.5},{label:'3',min:70,gpa:3},{label:'2.5',min:65,gpa:2.5},{label:'2',min:60,gpa:2},{label:'1.5',min:55,gpa:1.5},{label:'1',min:50,gpa:1},{label:'0',min:0,gpa:0}];
+const CREDIT_OPTIONS = [0.5,1.0,1.5,2.0,2.5];
+const creditToHours = c => c * 2;
 const CONDUCT_DEF = {presentScore:1,absentScore:-1,lateGroup:3,latePenalty:-1,minAttPct:20};
 const C = {red:'#C0392B',dark:'#96281B',bg:'#FFF9F0',card:'#fff',border:'#F0E0CC',text:'#2C1810',muted:'#9B7B5C',light:'#FAF0E6'};
-const NAV = [{id:'home',icon:'🏠',label:'หน้าหลัก'},{id:'att',icon:'✓',label:'เช็คชื่อ'},{id:'score',icon:'📊',label:'คะแนน'},{id:'stu',icon:'👥',label:'นักเรียน'},{id:'stat',icon:'📈',label:'สถิติ'},{id:'set',icon:'⚙️',label:'ตั้งค่า'}];
+const NAV = [{id:'home',icon:'🏠',label:'หน้าหลัก'},{id:'att',icon:'✓',label:'เช็คชื่อ'},{id:'score',icon:'📊',label:'คะแนน'},{id:'stu',icon:'👥',label:'นักเรียน'},{id:'stat',icon:'📈',label:'สถิติ'},{id:'io',icon:'📥',label:'นำเข้า/ส่งออก'},{id:'set',icon:'⚙️',label:'ตั้งค่า'}];
 
 // ===== UTILS =====
 const todayStr=()=>new Date().toISOString().split('T')[0];
@@ -31,30 +24,25 @@ const getGrade=(score,max)=>{const p=max>0?(score/max)*100:0;return GRADE_SCALE.
 const gradeColor=g=>!g||g.special?g?.color||'#dc2626':g.gpa>=3?'#16a34a':g.gpa>=1?'#d97706':'#dc2626';
 const gradeBg=g=>!g||g.special?'#fee2e2':g.gpa>=3?'#dcfce7':g.gpa>=1?'#fef9c3':'#fee2e2';
 const getCatMax=cat=>cat.subs?.length>0?cat.subs.reduce((s,x)=>s+x.max,0):cat.max||0;
-const getCatScore=(sid,cat,scores,term,year)=>{
-  if(cat.subs?.length>0)return cat.subs.reduce((t,sub)=>{const r=scores.find(x=>x.studentId===sid&&x.categoryId===cat.id&&x.subId===sub.id&&x.term===term&&x.year===year);return t+(r?r.score:0);},0);
-  const r=scores.find(x=>x.studentId===sid&&x.categoryId===cat.id&&!x.subId&&x.term===term&&x.year===year);return r?r.score:0;
-};
-const hasCatScore=(sid,cat,scores,term,year)=>{
-  if(cat.subs?.length>0)return cat.subs.some(sub=>scores.some(x=>x.studentId===sid&&x.categoryId===cat.id&&x.subId===sub.id&&x.term===term&&x.year===year));
-  return scores.some(x=>x.studentId===sid&&x.categoryId===cat.id&&!x.subId&&x.term===term&&x.year===year);
-};
-const hasIncomplete=(sid,cat,scores,term,year)=>{if(!cat.subs||!cat.subs.length)return false;return cat.subs.some(sub=>!scores.some(x=>x.studentId===sid&&x.categoryId===cat.id&&x.subId===sub.id&&x.term===term&&x.year===year));};
+const getCatScore=(sid,cat,scores,term,year)=>{if(cat.subs?.length>0)return cat.subs.reduce((t,sub)=>{const r=scores.find(x=>x.studentId===sid&&x.categoryId===cat.id&&x.subId===sub.id&&x.term===term&&x.year===year);return t+(r?r.score:0);},0);const r=scores.find(x=>x.studentId===sid&&x.categoryId===cat.id&&!x.subId&&x.term===term&&x.year===year);return r?r.score:0;};
+const hasCatScore=(sid,cat,scores,term,year)=>{if(cat.subs?.length>0)return cat.subs.some(sub=>scores.some(x=>x.studentId===sid&&x.categoryId===cat.id&&x.subId===sub.id&&x.term===term&&x.year===year));return scores.some(x=>x.studentId===sid&&x.categoryId===cat.id&&!x.subId&&x.term===term&&x.year===year);};
+const hasIncomplete=(sid,cat,scores,term,year)=>{if(!cat.subs?.length)return false;return cat.subs.some(sub=>!scores.some(x=>x.studentId===sid&&x.categoryId===cat.id&&x.subId===sub.id&&x.term===term&&x.year===year));};
 const calcConduct=(sid,att,cfg=CONDUCT_DEF)=>{const a=att.filter(x=>x.studentId===sid&&x.type==='class');let score=0,lc=0;const counts={present:0,absent:0,late:0,leave_p:0,leave_s:0,activity:0};
   for(const r of a){counts[r.status]=(counts[r.status]||0)+1;if(r.status==='present')score+=cfg.presentScore;else if(r.status==='absent')score+=cfg.absentScore;else if(r.status==='late')lc++;
   else if(STATUS[r.status]?.custom){const cs=r.customScore||0;if(cs>0)score+=cfg.presentScore;else if(cs<0)score+=cfg.absentScore;else lc++;}}
   score+=Math.floor(lc/cfg.lateGroup)*cfg.latePenalty;return{score,counts,total:a.length};};
-const calcAttRate=(sid,att,type='class')=>{const a=att.filter(x=>x.studentId===sid&&x.type===type);if(!a.length)return null;
-  const ok=a.filter(x=>{if(x.status==='present'||x.status==='late')return true;if(STATUS[x.status]?.custom)return(x.customScore||0)>=0;return false;}).length;return Math.round(ok/a.length*100);};
-const getSubjectGrade=(sid,subj,cats,scores,term,year,rate,minPct)=>{
-  if(rate!==null&&rate<minPct)return{label:'มส.',gpa:0,special:true,color:'#dc2626'};
-  const sc=cats.filter(c=>c.subjectId===subj.id);
-  if(sc.some(c=>hasIncomplete(sid,c,scores,term,year)&&hasCatScore(sid,c,scores,term,year)))return{label:'ร',gpa:0,special:true,color:'#d97706'};
-  const tot=sc.reduce((s,c)=>s+getCatScore(sid,c,scores,term,year),0);const mx=sc.reduce((s,c)=>s+getCatMax(c),0);
-  if(!sc.some(c=>hasCatScore(sid,c,scores,term,year)))return null;return getGrade(tot,mx);};
-const dateInRange=(ds,range)=>{if(range==='term')return true;const d=new Date(ds+'T00:00:00'),now=new Date();now.setHours(0,0,0,0);
-  if(range==='today')return ds===todayStr();if(range==='week'){const w=new Date(now);w.setDate(w.getDate()-7);return d>=w;}
-  if(range==='month'){const m=new Date(now);m.setDate(m.getDate()-30);return d>=m;}return true;};
+const calcAttRate=(sid,att,type='class')=>{const a=att.filter(x=>x.studentId===sid&&x.type===type);if(!a.length)return null;const ok=a.filter(x=>{if(x.status==='present'||x.status==='late')return true;if(STATUS[x.status]?.custom)return(x.customScore||0)>=0;return false;}).length;return Math.round(ok/a.length*100);};
+const getSubjectGrade=(sid,subj,cats,scores,term,year,rate,minPct)=>{if(rate!==null&&rate<minPct)return{label:'มส.',gpa:0,special:true,color:'#dc2626'};const sc=cats.filter(c=>c.subjectId===subj.id);if(sc.some(c=>hasIncomplete(sid,c,scores,term,year)&&hasCatScore(sid,c,scores,term,year)))return{label:'ร',gpa:0,special:true,color:'#d97706'};const tot=sc.reduce((s,c)=>s+getCatScore(sid,c,scores,term,year),0);const mx=sc.reduce((s,c)=>s+getCatMax(c),0);if(!sc.some(c=>hasCatScore(sid,c,scores,term,year)))return null;return getGrade(tot,mx);};
+const dateInRange=(ds,range)=>{if(range==='term')return true;const d=new Date(ds+'T00:00:00'),now=new Date();now.setHours(0,0,0,0);if(range==='today')return ds===todayStr();if(range==='week'){const w=new Date(now);w.setDate(w.getDate()-7);return d>=w;}if(range==='month'){const m=new Date(now);m.setDate(m.getDate()-30);return d>=m;}return true;};
+
+// ===== STORAGE =====
+const SK='chTeacher_v3';
+const loadData=async()=>{try{const r=await window.storage.get(SK);return r?JSON.parse(r.value):null;}catch{return null;}};
+const saveData=async d=>{try{await window.storage.set(SK,JSON.stringify(d));}catch{}};
+const initData=()=>({password:'0000',homeroom:'ม.5/2',classes:[...DEFAULT_CLASSES],
+  subjects:[{id:'sub_chinese',name:'ภาษาจีน',code:'จ',credits:1.0}],students:[],attendance:[],scores:[],
+  categories:[{id:'hw',name:'การบ้าน',subjectId:'sub_chinese',max:20,subs:[]},{id:'mid',name:'กลางภาค',subjectId:'sub_chinese',max:30,subs:[]},{id:'final',name:'ปลายภาค',subjectId:'sub_chinese',max:40,subs:[]},{id:'proj',name:'งาน/โปรเจกต์',subjectId:'sub_chinese',max:10,subs:[]}],
+  conduct:CONDUCT_DEF,term:1,year:2568});
 
 // ===== STYLES =====
 const sCard={background:C.card,borderRadius:12,border:`1px solid ${C.border}`,padding:16,marginBottom:12};
@@ -62,121 +50,72 @@ const sBtn=(p=true,sm=false)=>({padding:sm?'7px 14px':'10px 20px',borderRadius:8
 const sInp={padding:'10px 12px',borderRadius:8,border:`1.5px solid ${C.border}`,width:'100%',fontSize:15,background:C.card,color:C.text,boxSizing:'border-box',fontFamily:'inherit'};
 const sTab=a=>({padding:'9px 16px',borderRadius:8,cursor:'pointer',border:'none',fontWeight:a?700:500,background:a?C.red:'transparent',color:a?'white':C.muted,fontSize:14,fontFamily:'inherit'});
 
-// ===== COMPONENTS =====
-function Sheet({open,title,onClose,children}){if(!open)return null;
-  return(<div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'flex-end',justifyContent:'center',zIndex:300}}>
-    <div onClick={e=>e.stopPropagation()} style={{background:'white',borderRadius:'16px 16px 0 0',padding:24,width:'100%',maxWidth:480,maxHeight:'85vh',overflowY:'auto'}}>
-      {title&&<div style={{fontWeight:700,fontSize:17,marginBottom:16,color:C.text}}>{title}</div>}{children}</div></div>);}
-
-function Toast({msg,type,onClose}){useEffect(()=>{if(msg){const t=setTimeout(onClose,2800);return()=>clearTimeout(t);}},[msg,onClose]);
-  if(!msg)return null;return<div style={{position:'fixed',bottom:96,left:'50%',transform:'translateX(-50%)',background:type==='success'?'#16a34a':'#dc2626',color:'white',padding:'10px 18px',borderRadius:24,fontSize:14,boxShadow:'0 4px 16px rgba(0,0,0,0.2)',zIndex:400,maxWidth:'90%'}}>{msg}</div>;}
-
-function TopBar({onMenu,onLogout,label}){
-  return(<div style={{background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',padding:'12px 14px',display:'flex',justifyContent:'space-between',alignItems:'center',position:'sticky',top:0,zIndex:50,boxShadow:'0 2px 12px rgba(192,57,43,0.3)'}}>
-    <button onClick={onMenu} style={{background:'rgba(255,255,255,0.15)',border:'none',color:'white',width:38,height:38,borderRadius:10,cursor:'pointer',fontSize:20,display:'flex',alignItems:'center',justifyContent:'center'}}>☰</button>
-    <div style={{flex:1,textAlign:'center'}}><div style={{fontWeight:700,fontSize:16}}>中文课堂</div><div style={{fontSize:11,opacity:0.85}}>{label}</div></div>
-    <button onClick={onLogout} style={{background:'rgba(255,255,255,0.15)',border:'none',color:'white',width:38,height:38,borderRadius:10,cursor:'pointer',fontSize:18,display:'flex',alignItems:'center',justifyContent:'center'}}>⏻</button>
-  </div>);}
-
-function Drawer({open,onClose,current,onNav,data}){
-  return(<><div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',zIndex:200,opacity:open?1:0,pointerEvents:open?'auto':'none',transition:'opacity 0.2s'}}/>
-    <div style={{position:'fixed',top:0,left:0,bottom:0,width:280,background:'white',zIndex:201,transform:open?'translateX(0)':'translateX(-100%)',transition:'transform 0.25s',boxShadow:'2px 0 16px rgba(0,0,0,0.15)',display:'flex',flexDirection:'column'}}>
-      <div style={{background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',padding:'20px 18px'}}>
-        <div style={{fontSize:38,lineHeight:1}}>中</div><div style={{fontWeight:700,fontSize:16,marginTop:4}}>ห้องเรียนภาษาจีน</div>
-        <div style={{fontSize:12,opacity:0.85}}>ภาคเรียน {data.term}/{data.year}</div></div>
-      <div style={{flex:1,overflowY:'auto',padding:'10px 0'}}>
-        {NAV.map((n,i)=>(<div key={n.id}>{i===5&&<div style={{height:1,background:C.border,margin:'10px 16px'}}/>}
-          <button onClick={()=>{onNav(n.id);onClose();}} style={{width:'100%',padding:'12px 18px',border:'none',background:current===n.id?C.light:'transparent',color:current===n.id?C.red:C.text,display:'flex',alignItems:'center',gap:14,cursor:'pointer',fontSize:15,fontWeight:current===n.id?700:500,fontFamily:'inherit',borderLeft:`4px solid ${current===n.id?C.red:'transparent'}`}}>
-            <span style={{fontSize:18,width:22,textAlign:'center'}}>{n.icon}</span><span>{n.label}</span></button></div>))}
-      </div></div></>);}
+// ===== SHARED COMPONENTS =====
+function Sheet({open,title,onClose,children}){if(!open)return null;return(<div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',display:'flex',alignItems:'flex-end',justifyContent:'center',zIndex:300}}><div onClick={e=>e.stopPropagation()} style={{background:'white',borderRadius:'16px 16px 0 0',padding:24,width:'100%',maxWidth:480,maxHeight:'85vh',overflowY:'auto'}}>{title&&<div style={{fontWeight:700,fontSize:17,marginBottom:16,color:C.text}}>{title}</div>}{children}</div></div>);}
+function Toast({msg,type,onClose}){useEffect(()=>{if(msg){const t=setTimeout(onClose,2800);return()=>clearTimeout(t);}},[msg,onClose]);if(!msg)return null;return<div style={{position:'fixed',bottom:96,left:'50%',transform:'translateX(-50%)',background:type==='success'?'#16a34a':'#dc2626',color:'white',padding:'10px 18px',borderRadius:24,fontSize:14,boxShadow:'0 4px 16px rgba(0,0,0,0.2)',zIndex:400,maxWidth:'90%'}}>{msg}</div>;}
+function TopBar({onMenu,onLogout,label}){return(<div style={{background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',padding:'12px 14px',display:'flex',justifyContent:'space-between',alignItems:'center',position:'sticky',top:0,zIndex:50,boxShadow:'0 2px 12px rgba(192,57,43,0.3)'}}><button onClick={onMenu} style={{background:'rgba(255,255,255,0.15)',border:'none',color:'white',width:38,height:38,borderRadius:10,cursor:'pointer',fontSize:20,display:'flex',alignItems:'center',justifyContent:'center'}}>☰</button><div style={{flex:1,textAlign:'center'}}><div style={{fontWeight:700,fontSize:16}}>中文课堂</div><div style={{fontSize:11,opacity:0.85}}>{label}</div></div><button onClick={onLogout} style={{background:'rgba(255,255,255,0.15)',border:'none',color:'white',width:38,height:38,borderRadius:10,cursor:'pointer',fontSize:18,display:'flex',alignItems:'center',justifyContent:'center'}}>⏻</button></div>);}
+function Drawer({open,onClose,current,onNav,data}){return(<><div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',zIndex:200,opacity:open?1:0,pointerEvents:open?'auto':'none',transition:'opacity 0.2s'}}/><div style={{position:'fixed',top:0,left:0,bottom:0,width:280,background:'white',zIndex:201,transform:open?'translateX(0)':'translateX(-100%)',transition:'transform 0.25s',boxShadow:'2px 0 16px rgba(0,0,0,0.15)',display:'flex',flexDirection:'column'}}><div style={{background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',padding:'20px 18px'}}><div style={{fontSize:38,lineHeight:1}}>中</div><div style={{fontWeight:700,fontSize:16,marginTop:4}}>ห้องเรียนภาษาจีน</div><div style={{fontSize:12,opacity:0.85}}>ภาคเรียน {data.term}/{data.year}</div></div><div style={{flex:1,overflowY:'auto',padding:'10px 0'}}>{NAV.map((n,i)=>(<div key={n.id}>{(i===5||i===6)&&i===5&&<div style={{height:1,background:C.border,margin:'10px 16px'}}/>}<button onClick={()=>{onNav(n.id);onClose();}} style={{width:'100%',padding:'12px 18px',border:'none',background:current===n.id?C.light:'transparent',color:current===n.id?C.red:C.text,display:'flex',alignItems:'center',gap:14,cursor:'pointer',fontSize:15,fontWeight:current===n.id?700:500,fontFamily:'inherit',borderLeft:`4px solid ${current===n.id?C.red:'transparent'}`}}><span style={{fontSize:18,width:22,textAlign:'center'}}>{n.icon}</span><span>{n.label}</span></button></div>))}</div></div></>);}
 
 // ===== LOGIN =====
-function LoginScreen({data,onLogin}){
-  const[mode,setMode]=useState(null);const[pwd,setPwd]=useState('');const[sid,setSid]=useState('');const[pin,setPin]=useState('');const[err,setErr]=useState('');
+function LoginScreen({data,onLogin}){const[mode,setMode]=useState(null);const[pwd,setPwd]=useState('');const[sid,setSid]=useState('');const[pin,setPin]=useState('');const[err,setErr]=useState('');
   const loginT=()=>{pwd===data.password?onLogin({role:'teacher'}):setErr('รหัสผ่านไม่ถูกต้อง');};
   const loginS=()=>{const s=data.students.find(x=>x.id===sid.trim());if(!s)return setErr('ไม่พบรหัสนักเรียน');if(pin!==s.pin)return setErr('PIN ไม่ถูกต้อง');onLogin({role:'student',id:s.id});};
-  return(<div style={{minHeight:'100vh',background:C.bg,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:24}}>
-    <div style={{textAlign:'center',marginBottom:44}}>
-      <div style={{width:88,height:88,borderRadius:24,background:`linear-gradient(135deg,${C.red},${C.dark})`,display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px',boxShadow:'0 8px 32px rgba(192,57,43,0.3)'}}><span style={{fontSize:52,color:'white',lineHeight:1}}>中</span></div>
-      <div style={{fontSize:24,fontWeight:700,color:C.red}}>ห้องเรียนภาษาจีน</div>
-      <div style={{color:C.muted,fontSize:14,marginTop:4}}>ระบบจัดการการเรียนการสอน</div></div>
-    {!mode?(<div style={{width:'100%',maxWidth:320,display:'flex',flexDirection:'column',gap:12}}>
-      <button onClick={()=>{setMode('teacher');setErr('');}} style={{...sBtn(true),padding:18,fontSize:17,borderRadius:12}}>👩‍🏫 เข้าสู่ระบบครู</button>
-      <button onClick={()=>{setMode('student');setErr('');}} style={{...sBtn(false),padding:18,fontSize:17,borderRadius:12,border:`1.5px solid ${C.border}`}}>🎒 เข้าสู่ระบบนักเรียน</button></div>):(
-      <div style={{...sCard,width:'100%',maxWidth:340}}>
-        <div style={{fontWeight:700,fontSize:18,marginBottom:16}}>{mode==='teacher'?'👩‍🏫 ครู':'🎒 นักเรียน'}</div>
-        {mode==='teacher'?<input type="password" placeholder="รหัสผ่าน (ค่าเริ่มต้น: 0000)" value={pwd} onChange={e=>setPwd(e.target.value)} onKeyDown={e=>e.key==='Enter'&&loginT()} style={{...sInp,marginBottom:10}} autoFocus/>:
-        <><input placeholder="รหัสนักเรียน" value={sid} onChange={e=>setSid(e.target.value)} style={{...sInp,marginBottom:8}} autoFocus/>
-        <input type="password" placeholder="PIN 4 หลัก" value={pin} onChange={e=>setPin(e.target.value)} onKeyDown={e=>e.key==='Enter'&&loginS()} style={{...sInp,marginBottom:10}} maxLength={4}/></>}
-        {err&&<div style={{color:C.red,fontSize:13,marginBottom:8,padding:'6px 10px',background:'#fff0f0',borderRadius:6}}>{err}</div>}
-        <button onClick={mode==='teacher'?loginT:loginS} style={{...sBtn(true),width:'100%',marginBottom:8}}>เข้าสู่ระบบ</button>
-        <button onClick={()=>{setMode(null);setErr('');}} style={{...sBtn(false),width:'100%'}}>← ย้อนกลับ</button></div>)}
-  </div>);}
+  return(<div style={{minHeight:'100vh',background:C.bg,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:24}}><div style={{textAlign:'center',marginBottom:44}}><div style={{width:88,height:88,borderRadius:24,background:`linear-gradient(135deg,${C.red},${C.dark})`,display:'flex',alignItems:'center',justifyContent:'center',margin:'0 auto 16px',boxShadow:'0 8px 32px rgba(192,57,43,0.3)'}}><span style={{fontSize:52,color:'white',lineHeight:1}}>中</span></div><div style={{fontSize:24,fontWeight:700,color:C.red}}>ห้องเรียนภาษาจีน</div><div style={{color:C.muted,fontSize:14,marginTop:4}}>ระบบจัดการการเรียนการสอน</div></div>
+    {!mode?(<div style={{width:'100%',maxWidth:320,display:'flex',flexDirection:'column',gap:12}}><button onClick={()=>{setMode('teacher');setErr('');}} style={{...sBtn(true),padding:18,fontSize:17,borderRadius:12}}>👩‍🏫 เข้าสู่ระบบครู</button><button onClick={()=>{setMode('student');setErr('');}} style={{...sBtn(false),padding:18,fontSize:17,borderRadius:12,border:`1.5px solid ${C.border}`}}>🎒 เข้าสู่ระบบนักเรียน</button></div>):(<div style={{...sCard,width:'100%',maxWidth:340}}><div style={{fontWeight:700,fontSize:18,marginBottom:16}}>{mode==='teacher'?'👩‍🏫 ครู':'🎒 นักเรียน'}</div>
+      {mode==='teacher'?<input type="password" placeholder="รหัสผ่าน (0000)" value={pwd} onChange={e=>setPwd(e.target.value)} onKeyDown={e=>e.key==='Enter'&&loginT()} style={{...sInp,marginBottom:10}} autoFocus/>:<><input placeholder="รหัสนักเรียน" value={sid} onChange={e=>setSid(e.target.value)} style={{...sInp,marginBottom:8}} autoFocus/><input type="password" placeholder="PIN 4 หลัก" value={pin} onChange={e=>setPin(e.target.value)} onKeyDown={e=>e.key==='Enter'&&loginS()} style={{...sInp,marginBottom:10}} maxLength={4}/></>}
+      {err&&<div style={{color:C.red,fontSize:13,marginBottom:8,padding:'6px 10px',background:'#fff0f0',borderRadius:6}}>{err}</div>}
+      <button onClick={mode==='teacher'?loginT:loginS} style={{...sBtn(true),width:'100%',marginBottom:8}}>เข้าสู่ระบบ</button><button onClick={()=>{setMode(null);setErr('');}} style={{...sBtn(false),width:'100%'}}>← ย้อนกลับ</button></div>)}</div>);}
 
 // ===== DASHBOARD =====
-function Dashboard({data,setPage,openAtt}){
-  const today=todayStr();const morningAtt=data.attendance.filter(a=>a.date===today&&a.type==='morning');
-  const hStu=data.students.filter(s=>s.classId===data.homeroom);
+function Dashboard({data,setPage,openAtt}){const today=todayStr();const morningAtt=data.attendance.filter(a=>a.date===today&&a.type==='morning');const hStu=data.students.filter(s=>s.classId===data.homeroom);
   const summary=useMemo(()=>{const r={};S_ORDER.forEach(k=>r[k]=0);morningAtt.forEach(a=>{if(r[a.status]!==undefined)r[a.status]++;});return r;},[morningAtt]);
   const classesHave=data.classes.filter(c=>data.students.some(s=>s.classId===c));
   const atRisk=useMemo(()=>data.students.map(s=>({stu:s,rate:calcAttRate(s.id,data.attendance)})).filter(x=>x.rate!==null&&x.rate<data.conduct.minAttPct),[data.students,data.attendance,data.conduct]);
-
-  return(<div style={{padding:'16px 16px 100px'}}>
-    <div style={{marginBottom:16}}><div style={{fontSize:21,fontWeight:700,color:C.text}}>สวัสดี ครู! 👋</div><div style={{color:C.muted,fontSize:14}}>{fmtDate(today)}</div></div>
+  return(<div style={{padding:'16px 16px 100px'}}><div style={{marginBottom:16}}><div style={{fontSize:21,fontWeight:700,color:C.text}}>สวัสดี ครู! 👋</div><div style={{color:C.muted,fontSize:14}}>{fmtDate(today)}</div></div>
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:14}}>
-      <button onClick={()=>openAtt('morning',data.homeroom)} style={{background:'linear-gradient(135deg,#0891b2,#0e7490)',color:'white',border:'none',borderRadius:14,padding:14,textAlign:'left',cursor:'pointer',fontFamily:'inherit'}}>
-        <div style={{fontSize:24,marginBottom:4}}>🌅</div><div style={{fontSize:13,opacity:0.9}}>เช็คชื่อเข้าแถว</div>
-        <div style={{fontSize:18,fontWeight:700}}>{data.homeroom}</div>
-        <div style={{fontSize:11,opacity:0.85,marginTop:6}}>{morningAtt.length>0?`เช็คแล้ว ${morningAtt.length}/${hStu.length}`:`${hStu.length} คน →`}</div></button>
-      <button onClick={()=>openAtt('class')} style={{background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',border:'none',borderRadius:14,padding:14,textAlign:'left',cursor:'pointer',fontFamily:'inherit'}}>
-        <div style={{fontSize:24,marginBottom:4}}>📚</div><div style={{fontSize:13,opacity:0.9}}>เช็คชื่อคาบเรียน</div>
-        <div style={{fontSize:18,fontWeight:700}}>เลือกห้อง</div>
-        <div style={{fontSize:11,opacity:0.85,marginTop:6}}>{classesHave.length} ห้อง →</div></button>
-    </div>
-
-    <div style={{...sCard,padding:14}}>
-      <div style={{fontWeight:700,fontSize:14,color:C.text,marginBottom:10}}>🌅 สรุปเข้าแถววันนี้ · {data.homeroom} ({morningAtt.length}/{hStu.length})</div>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8}}>
-        {S_ORDER.map(k=>(<div key={k} style={{background:C.light,borderRadius:8,padding:'10px 8px',textAlign:'center',borderLeft:`3px solid ${STATUS[k].bg}`}}>
-          <div style={{fontSize:22,fontWeight:700,color:STATUS[k].bg,lineHeight:1}}>{summary[k]}</div>
-          <div style={{fontSize:11,color:C.muted,marginTop:4}}>{STATUS[k].label}</div></div>))}
-      </div></div>
-
-    {atRisk.length>0&&<div style={{...sCard,borderLeft:'4px solid #dc2626',background:'#fff5f5'}}>
-      <div style={{fontWeight:700,fontSize:14,color:'#991b1b',marginBottom:6}}>🚨 เสี่ยงหมดสิทธิสอบ ({atRisk.length} คน)</div>
-      {atRisk.slice(0,5).map(({stu,rate})=>(<div key={stu.id} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',borderTop:`1px solid ${C.border}`,fontSize:14}}>
-        <span>{stu.nickname||stu.name}</span><span style={{color:'#dc2626',fontWeight:700}}>{stu.classId} · {rate}%</span></div>))}
-    </div>}
-
+      <button onClick={()=>openAtt('morning',data.homeroom)} style={{background:'linear-gradient(135deg,#0891b2,#0e7490)',color:'white',border:'none',borderRadius:14,padding:14,textAlign:'left',cursor:'pointer',fontFamily:'inherit'}}><div style={{fontSize:24,marginBottom:4}}>🌅</div><div style={{fontSize:13,opacity:0.9}}>เช็คชื่อเข้าแถว</div><div style={{fontSize:18,fontWeight:700}}>{data.homeroom}</div><div style={{fontSize:11,opacity:0.85,marginTop:6}}>{morningAtt.length>0?`เช็คแล้ว ${morningAtt.length}/${hStu.length}`:`${hStu.length} คน →`}</div></button>
+      <button onClick={()=>openAtt('class')} style={{background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',border:'none',borderRadius:14,padding:14,textAlign:'left',cursor:'pointer',fontFamily:'inherit'}}><div style={{fontSize:24,marginBottom:4}}>📚</div><div style={{fontSize:13,opacity:0.9}}>เช็คชื่อคาบเรียน</div><div style={{fontSize:18,fontWeight:700}}>เลือกห้อง</div><div style={{fontSize:11,opacity:0.85,marginTop:6}}>{classesHave.length} ห้อง →</div></button></div>
+    <div style={{...sCard,padding:14}}><div style={{fontWeight:700,fontSize:14,color:C.text,marginBottom:10}}>🌅 สรุปเข้าแถววันนี้ · {data.homeroom} ({morningAtt.length}/{hStu.length})</div>
+      <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:8}}>{S_ORDER.map(k=>(<div key={k} style={{background:C.light,borderRadius:8,padding:'10px 8px',textAlign:'center',borderLeft:`3px solid ${STATUS[k].bg}`}}><div style={{fontSize:22,fontWeight:700,color:STATUS[k].bg,lineHeight:1}}>{summary[k]}</div><div style={{fontSize:11,color:C.muted,marginTop:4}}>{STATUS[k].label}</div></div>))}</div></div>
+    {atRisk.length>0&&<div style={{...sCard,borderLeft:'4px solid #dc2626',background:'#fff5f5'}}><div style={{fontWeight:700,fontSize:14,color:'#991b1b',marginBottom:6}}>🚨 เสี่ยง มส. ({atRisk.length} คน)</div>
+      {atRisk.slice(0,5).map(({stu,rate})=>(<div key={stu.id} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',borderTop:`1px solid ${C.border}`,fontSize:14}}><span>{stu.nickname||stu.name}</span><span style={{color:'#dc2626',fontWeight:700}}>{stu.classId} · {rate}%</span></div>))}</div>}
     <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
       <button onClick={()=>setPage('stu')} style={{...sCard,margin:0,cursor:'pointer',textAlign:'left',padding:12}}><div style={{fontSize:22}}>👥</div><div style={{fontWeight:700,marginTop:4,fontSize:14}}>นักเรียน</div><div style={{fontSize:13,color:C.muted}}>{data.students.length} คน</div></button>
-      <button onClick={()=>setPage('stat')} style={{...sCard,margin:0,cursor:'pointer',textAlign:'left',padding:12}}><div style={{fontSize:22}}>📈</div><div style={{fontWeight:700,marginTop:4,fontSize:14}}>สถิติ</div><div style={{fontSize:13,color:C.muted}}>คะแนน · เข้าเรียน</div></button>
-    </div>
-  </div>);}
+      <button onClick={()=>setPage('stat')} style={{...sCard,margin:0,cursor:'pointer',textAlign:'left',padding:12}}><div style={{fontSize:22}}>📈</div><div style={{fontWeight:700,marginTop:4,fontSize:14}}>สถิติ</div><div style={{fontSize:13,color:C.muted}}>คะแนน · เข้าเรียน</div></button></div></div>);}
 
-// ===== ATTENDANCE =====
+// ===== ATTENDANCE (with period support) =====
 function AttendancePage({data,update,initType,initClass,toast}){
   const[tab,setTab]=useState(initType||'morning');const[date,setDate]=useState(todayStr());
   const[cls,setCls]=useState(initClass||(tab==='morning'?data.homeroom:''));
-  const[subjId,setSubjId]=useState(data.subjects[0]?.id||'');const[scoreModal,setScoreModal]=useState(null);
-  useEffect(()=>{setCls(tab==='morning'?data.homeroom:'');},[tab,data.homeroom]);
+  const[subjId,setSubjId]=useState(data.subjects[0]?.id||'');
+  const[period,setPeriod]=useState(1);const[scoreModal,setScoreModal]=useState(null);
+  useEffect(()=>{setCls(tab==='morning'?data.homeroom:'');setPeriod(1);},[tab,data.homeroom]);
   const classesHave=data.classes.filter(c=>data.students.some(s=>s.classId===c));
   const students=data.students.filter(s=>s.classId===cls);
-  const getRec=id=>data.attendance.find(a=>a.date===date&&a.type===tab&&a.studentId===id&&(tab==='morning'||a.subjectId===subjId));
+  const subj=data.subjects.find(s=>s.id===subjId);
+  const maxPeriods=subj?Math.max(1,Math.ceil(creditToHours(subj.credits))):5;
+
+  // Match attendance by date+type+student+subject+period (class) or date+type+student (morning)
+  const getRec=id=>data.attendance.find(a=>a.date===date&&a.type===tab&&a.studentId===id&&(tab==='morning'||(a.subjectId===subjId&&a.period===period)));
+
+  // Count how many periods already checked today for this class+subject
+  const checkedPeriods=useMemo(()=>{if(tab!=='class'||!cls||!subjId)return[];const periods=new Set();
+    data.attendance.filter(a=>a.date===date&&a.type==='class'&&a.subjectId===subjId&&students.some(s=>s.id===a.studentId)).forEach(a=>{if(a.period)periods.add(a.period);});return Array.from(periods).sort();
+  },[data.attendance,date,tab,cls,subjId,students]);
+
   const saveStatus=(id,status,customScore,note)=>{update(prev=>{
-    const a=prev.attendance.filter(x=>!(x.date===date&&x.type===tab&&x.studentId===id&&(tab==='morning'||x.subjectId===subjId)));
-    a.push({date,type:tab,studentId:id,status,...(tab==='class'?{subjectId:subjId}:{}),
+    const a=prev.attendance.filter(x=>!(x.date===date&&x.type===tab&&x.studentId===id&&(tab==='morning'||(x.subjectId===subjId&&x.period===period))));
+    a.push({date,type:tab,studentId:id,status,...(tab==='class'?{subjectId:subjId,period}:{}),
       ...(customScore!==undefined?{customScore}:{}),
       ...(note?{note}:{})});return{...prev,attendance:a};});};
   const setStatus=(id,status)=>{if(STATUS[status]?.custom&&tab==='class'){const e=getRec(id);setScoreModal({studentId:id,status,customScore:e?.customScore??0,note:e?.note||''});}else saveStatus(id,status);};
   const markAll=status=>{if(STATUS[status]?.custom)return;update(prev=>{
-    let a=prev.attendance.filter(x=>!(x.date===date&&x.type===tab&&students.some(s=>s.id===x.studentId)&&(tab==='morning'||x.subjectId===subjId)));
-    students.forEach(s=>a.push({date,type:tab,studentId:s.id,status,...(tab==='class'?{subjectId:subjId}:{})}));return{...prev,attendance:a};});
+    let a=prev.attendance.filter(x=>!(x.date===date&&x.type===tab&&students.some(s=>s.id===x.studentId)&&(tab==='morning'||(x.subjectId===subjId&&x.period===period))));
+    students.forEach(s=>a.push({date,type:tab,studentId:s.id,status,...(tab==='class'?{subjectId:subjId,period}:{})}));return{...prev,attendance:a};});
     toast(`${STATUS[status].label}ทุกคน ✓`,'success');};
   const counted=st=>students.filter(s=>getRec(s.id)?.status===st).length;
 
-  return(<div style={{padding:'14px 14px 100px'}}>
-    <div style={{fontWeight:700,fontSize:18,marginBottom:12,color:C.text}}>✓ เช็คชื่อ</div>
+  return(<div style={{padding:'14px 14px 100px'}}><div style={{fontWeight:700,fontSize:18,marginBottom:12,color:C.text}}>✓ เช็คชื่อ</div>
     <div style={{display:'flex',gap:6,marginBottom:12,background:'white',padding:5,borderRadius:10,border:`1px solid ${C.border}`}}>
       <button onClick={()=>setTab('morning')} style={{...sTab(tab==='morning'),flex:1}}>🌅 เข้าแถว</button>
       <button onClick={()=>setTab('class')} style={{...sTab(tab==='class'),flex:1}}>📚 คาบเรียน</button></div>
@@ -187,468 +126,216 @@ function AttendancePage({data,update,initType,initClass,toast}){
           {tab==='morning'?<input value={data.homeroom} disabled style={{...sInp,background:C.light,fontWeight:700,color:C.red}}/>:
           <select value={cls} onChange={e=>setCls(e.target.value)} style={{...sInp,fontFamily:'inherit'}}><option value="">-- เลือก --</option>
             {classesHave.map(c=><option key={c} value={c}>{c} ({data.students.filter(s=>s.classId===c).length})</option>)}</select>}</div></div>
-      {tab==='class'&&<div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>รายวิชา</div>
-        <select value={subjId} onChange={e=>setSubjId(e.target.value)} style={{...sInp,fontFamily:'inherit'}}>
-          {data.subjects.map(s=><option key={s.id} value={s.id}>{s.name} ({s.credits} หน่วยกิต)</option>)}</select></div>}
+      {tab==='class'&&<><div style={{marginBottom:10}}><div style={{fontSize:12,color:C.muted,marginBottom:4}}>รายวิชา</div>
+        <select value={subjId} onChange={e=>{setSubjId(e.target.value);setPeriod(1);}} style={{...sInp,fontFamily:'inherit'}}>
+          {data.subjects.map(s=><option key={s.id} value={s.id}>{s.name} ({s.credits} หน่วยกิต · {creditToHours(s.credits)} ชม./สัปดาห์)</option>)}</select></div>
+        <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>คาบที่ (1 คาบ = 1 ชั่วโมง) {checkedPeriods.length>0&&<span style={{color:'#16a34a'}}>· เช็คแล้วคาบ: {checkedPeriods.join(', ')}</span>}</div>
+          <div style={{display:'flex',gap:6}}>{Array.from({length:maxPeriods},(_,i)=>i+1).map(p=>{
+            const done=checkedPeriods.includes(p)&&p!==period;
+            return<button key={p} onClick={()=>setPeriod(p)} style={{flex:1,padding:'8px 4px',borderRadius:8,border:`1.5px solid ${period===p?C.red:done?'#16a34a':C.border}`,background:period===p?C.red:done?'#dcfce7':'white',color:period===p?'white':done?'#16a34a':C.text,fontSize:14,fontWeight:period===p?700:500,cursor:'pointer',fontFamily:'inherit'}}>คาบ {p}{done&&' ✓'}</button>})}</div></div></>}
       {tab==='morning'&&<div style={{fontSize:12,color:C.muted,marginTop:8}}>เข้าแถว <b style={{color:C.red}}>{data.homeroom}</b> · เก็บสถิติ (ไม่นับคะแนน)</div>}
     </div>
-
-    {cls&&students.length>0&&(<>
-      <div style={{...sCard,padding:12}}>
-        <div style={{display:'flex',justifyContent:'space-between',marginBottom:10,fontSize:12,fontWeight:600,flexWrap:'wrap',gap:6}}>
-          {S_ORDER.map(k=><span key={k} style={{color:STATUS[k].bg}}>{STATUS[k].short} <b>{counted(k)}</b></span>)}</div>
-        <div style={{display:'flex',gap:6}}>
-          <button onClick={()=>markAll('present')} style={{flex:1,padding:7,borderRadius:6,border:'1px solid #16a34a',background:'#dcfce7',color:'#16a34a',fontSize:12,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>✓ มาทุกคน</button>
-          <button onClick={()=>markAll('absent')} style={{flex:1,padding:7,borderRadius:6,border:'1px solid #dc2626',background:'#fee2e2',color:'#dc2626',fontSize:12,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>✗ ขาดทุกคน</button></div></div>
-
+    {cls&&students.length>0&&(<><div style={{...sCard,padding:12}}>
+      <div style={{display:'flex',justifyContent:'space-between',marginBottom:10,fontSize:12,fontWeight:600,flexWrap:'wrap',gap:6}}>
+        {S_ORDER.map(k=><span key={k} style={{color:STATUS[k].bg}}>{STATUS[k].short} <b>{counted(k)}</b></span>)}</div>
+      <div style={{display:'flex',gap:6}}><button onClick={()=>markAll('present')} style={{flex:1,padding:7,borderRadius:6,border:'1px solid #16a34a',background:'#dcfce7',color:'#16a34a',fontSize:12,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>✓ มาทุกคน</button>
+        <button onClick={()=>markAll('absent')} style={{flex:1,padding:7,borderRadius:6,border:'1px solid #dc2626',background:'#fee2e2',color:'#dc2626',fontSize:12,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>✗ ขาดทุกคน</button></div></div>
       {students.map((stu,i)=>{const rec=getRec(stu.id);return(<div key={stu.id} style={{...sCard,marginBottom:8,padding:'12px 14px'}}>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-          <div><span style={{fontSize:13,color:C.muted,marginRight:6}}>{i+1}.</span><span style={{fontWeight:600,fontSize:15}}>{stu.nickname||stu.name}</span>
-            <span style={{fontSize:12,color:C.muted,marginLeft:6}}>{stu.id}</span></div>
-          {rec&&<span style={{background:STATUS[rec.status].bg,color:'white',fontSize:12,padding:'3px 10px',borderRadius:12,fontWeight:600}}>
-            {STATUS[rec.status].label}{STATUS[rec.status]?.custom&&rec.customScore!==undefined?` (${rec.customScore>0?'+':''}${rec.customScore})`:''}</span>}</div>
-        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:5}}>
-          {S_ORDER.map(k=>{const a=rec?.status===k;return(<button key={k} onClick={()=>setStatus(stu.id,k)}
-            style={{padding:'7px 4px',borderRadius:6,border:`1.5px solid ${a?STATUS[k].bg:'#e5e7eb'}`,background:a?STATUS[k].bg:'white',color:a?'white':'#9ca3af',fontSize:12,fontWeight:a?700:500,cursor:'pointer',fontFamily:'inherit'}}>{STATUS[k].label}</button>);})}</div>
-      </div>);})}
-    </>)}
+          <div><span style={{fontSize:13,color:C.muted,marginRight:6}}>{i+1}.</span><span style={{fontWeight:600,fontSize:15}}>{stu.nickname||stu.name}</span><span style={{fontSize:12,color:C.muted,marginLeft:6}}>{stu.id}</span></div>
+          {rec&&<span style={{background:STATUS[rec.status].bg,color:'white',fontSize:12,padding:'3px 10px',borderRadius:12,fontWeight:600}}>{STATUS[rec.status].label}{STATUS[rec.status]?.custom&&rec.customScore!==undefined?` (${rec.customScore>0?'+':''}${rec.customScore})`:''}</span>}</div>
+        <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:5}}>{S_ORDER.map(k=>{const a=rec?.status===k;return(<button key={k} onClick={()=>setStatus(stu.id,k)} style={{padding:'7px 4px',borderRadius:6,border:`1.5px solid ${a?STATUS[k].bg:'#e5e7eb'}`,background:a?STATUS[k].bg:'white',color:a?'white':'#9ca3af',fontSize:12,fontWeight:a?700:500,cursor:'pointer',fontFamily:'inherit'}}>{STATUS[k].label}</button>);})}</div></div>);})}</>)}
     {!cls&&tab==='class'&&<div style={{textAlign:'center',color:C.muted,padding:48}}>📋 เลือกห้องเรียน</div>}
-
-    <Sheet open={!!scoreModal} title={scoreModal?`📝 ${STATUS[scoreModal.status]?.label} — คะแนนจิตพิสัย`:''} onClose={()=>setScoreModal(null)}>
-      {scoreModal&&<div>
-        <div style={{fontSize:12,color:C.muted,marginBottom:4}}>คะแนน: +เท่ากับมา, -เท่ากับขาด, 0=สาย</div>
+    <Sheet open={!!scoreModal} title={scoreModal?`📝 ${STATUS[scoreModal.status]?.label}`:''} onClose={()=>setScoreModal(null)}>
+      {scoreModal&&<div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>คะแนน: +มา, -ขาด, 0=สาย</div>
         <input type="number" step="0.5" value={scoreModal.customScore} onChange={e=>setScoreModal(p=>({...p,customScore:parseFloat(e.target.value)||0}))} style={{...sInp,marginBottom:10,fontSize:18,fontWeight:700,textAlign:'center'}} autoFocus/>
-        <div style={{display:'flex',gap:6,marginBottom:14}}>
-          {[-1,-0.5,0,0.5,1].map(n=><button key={n} onClick={()=>setScoreModal(p=>({...p,customScore:n}))}
-            style={{flex:1,padding:8,borderRadius:6,border:`1.5px solid ${scoreModal.customScore===n?C.red:C.border}`,background:scoreModal.customScore===n?C.red:'white',color:scoreModal.customScore===n?'white':C.text,cursor:'pointer',fontFamily:'inherit',fontSize:13,fontWeight:600}}>{n>0?'+':''}{n}</button>)}</div>
+        <div style={{display:'flex',gap:6,marginBottom:14}}>{[-1,-0.5,0,0.5,1].map(n=><button key={n} onClick={()=>setScoreModal(p=>({...p,customScore:n}))} style={{flex:1,padding:8,borderRadius:6,border:`1.5px solid ${scoreModal.customScore===n?C.red:C.border}`,background:scoreModal.customScore===n?C.red:'white',color:scoreModal.customScore===n?'white':C.text,cursor:'pointer',fontFamily:'inherit',fontSize:13,fontWeight:600}}>{n>0?'+':''}{n}</button>)}</div>
         <input value={scoreModal.note||''} onChange={e=>setScoreModal(p=>({...p,note:e.target.value}))} style={{...sInp,marginBottom:14}} placeholder="หมายเหตุ"/>
         <div style={{display:'flex',gap:8}}><button onClick={()=>setScoreModal(null)} style={{...sBtn(false),flex:1}}>ยกเลิก</button>
-          <button onClick={()=>{saveStatus(scoreModal.studentId,scoreModal.status,scoreModal.customScore,scoreModal.note);setScoreModal(null);}} style={{...sBtn(true),flex:1}}>บันทึก</button></div></div>}</Sheet>
-  </div>);}
+          <button onClick={()=>{saveStatus(scoreModal.studentId,scoreModal.status,scoreModal.customScore,scoreModal.note);setScoreModal(null);}} style={{...sBtn(true),flex:1}}>บันทึก</button></div></div>}</Sheet></div>);}
 
-// ===== SCORES =====
-function ScoresPage({data,update,toast}){
-  const[sub,setSub]=useState('entry');const[subjId,setSubjId]=useState(data.subjects[0]?.id||'');
-  const[cls,setCls]=useState('');const[catId,setCatId]=useState('');const[subCatId,setSubCatId]=useState('');
-  const[draft,setDraft]=useState({});const[catModal,setCatModal]=useState(null);const[catForm,setCatForm]=useState({name:'',max:'',subjectId:''});
-  const[subCatModal,setSubCatModal]=useState(null);const[subCatForm,setSubCatForm]=useState({name:'',max:'',date:todayStr()});
-  const[subjModal,setSubjModal]=useState(null);const[subjForm,setSubjForm]=useState({name:'',code:'',credits:''});
-  const classesHave=data.classes.filter(c=>data.students.some(s=>s.classId===c));
-  const students=data.students.filter(s=>s.classId===cls);const subjCats=data.categories.filter(c=>c.subjectId===subjId);
-  const cat=data.categories.find(c=>c.id===catId);const subCat=cat?.subs?.find(s=>s.id===subCatId);
-  const subj=data.subjects.find(s=>s.id===subjId);const subjMax=subjCats.reduce((s,c)=>s+getCatMax(c),0);
-  const getScore=sid=>{if(subCat)return data.scores.find(r=>r.studentId===sid&&r.categoryId===catId&&r.subId===subCatId&&r.term===data.term&&r.year===data.year)?.score??'';
-    if(cat&&(!cat.subs||!cat.subs.length))return data.scores.find(r=>r.studentId===sid&&r.categoryId===catId&&!r.subId&&r.term===data.term&&r.year===data.year)?.score??'';return'';};
+// ===== SCORES (same as before, with credit display) =====
+function ScoresPage({data,update,toast}){const[sub,setSub]=useState('entry');const[subjId,setSubjId]=useState(data.subjects[0]?.id||'');const[cls,setCls]=useState('');const[catId,setCatId]=useState('');const[subCatId,setSubCatId]=useState('');const[draft,setDraft]=useState({});const[catModal,setCatModal]=useState(null);const[catForm,setCatForm]=useState({name:'',max:'',subjectId:''});const[subCatModal,setSubCatModal]=useState(null);const[subCatForm,setSubCatForm]=useState({name:'',max:'',date:todayStr()});const[subjModal,setSubjModal]=useState(null);const[subjForm,setSubjForm]=useState({name:'',code:'',credits:1});
+  const classesHave=data.classes.filter(c=>data.students.some(s=>s.classId===c));const students=data.students.filter(s=>s.classId===cls);const subjCats=data.categories.filter(c=>c.subjectId===subjId);const cat=data.categories.find(c=>c.id===catId);const subCat=cat?.subs?.find(s=>s.id===subCatId);const subj=data.subjects.find(s=>s.id===subjId);const subjMax=subjCats.reduce((s,c)=>s+getCatMax(c),0);
+  const getScore=sid=>{if(subCat)return data.scores.find(r=>r.studentId===sid&&r.categoryId===catId&&r.subId===subCatId&&r.term===data.term&&r.year===data.year)?.score??'';if(cat&&(!cat.subs||!cat.subs.length))return data.scores.find(r=>r.studentId===sid&&r.categoryId===catId&&!r.subId&&r.term===data.term&&r.year===data.year)?.score??'';return'';};
   const entryMax=subCat?subCat.max:(cat&&(!cat.subs||!cat.subs.length)?cat.max:0);
-  const saveScore=(sid,val)=>{const v=parseFloat(val);update(prev=>{const s=prev.scores.filter(r=>!(r.studentId===sid&&r.categoryId===catId&&(subCat?r.subId===subCatId:!r.subId)&&r.term===prev.term&&r.year===prev.year));
-    if(!isNaN(v)&&val!=='')s.push({studentId:sid,categoryId:catId,...(subCat?{subId:subCatId}:{}),score:v,term:prev.term,year:prev.year,date:todayStr()});return{...prev,scores:s};});
-    setDraft(p=>{const n={...p};delete n[sid];return n;});};
+  const saveScore=(sid,val)=>{const v=parseFloat(val);update(prev=>{const s=prev.scores.filter(r=>!(r.studentId===sid&&r.categoryId===catId&&(subCat?r.subId===subCatId:!r.subId)&&r.term===prev.term&&r.year===prev.year));if(!isNaN(v)&&val!=='')s.push({studentId:sid,categoryId:catId,...(subCat?{subId:subCatId}:{}),score:v,term:prev.term,year:prev.year,date:todayStr()});return{...prev,scores:s};});setDraft(p=>{const n={...p};delete n[sid];return n;});};
   const canEnter=()=>cat&&cls&&(cat.subs?.length>0?!!subCat:true);
-
-  const openCatAdd=()=>{setCatForm({name:'',max:'20',subjectId:subjId});setCatModal('add');};
-  const saveCat=()=>{if(!catForm.name.trim())return;update(prev=>{if(catModal==='add')return{...prev,categories:[...prev.categories,{id:uid(),name:catForm.name.trim(),subjectId:catForm.subjectId||subjId,max:parseFloat(catForm.max)||0,subs:[]}]};
-    return{...prev,categories:prev.categories.map(c=>c.id===catForm.id?{...c,name:catForm.name.trim(),max:parseFloat(catForm.max)||c.max}:c)};});setCatModal(null);toast('บันทึกแล้ว','success');};
-  const delCat=id=>{if(!window.confirm('ลบหมวดนี้?'))return;update(prev=>({...prev,categories:prev.categories.filter(c=>c.id!==id),scores:prev.scores.filter(r=>r.categoryId!==id)}));};
-  const openSubAdd=()=>{setSubCatForm({name:'',max:'5',date:todayStr()});setSubCatModal('add');};
-  const saveSubCat=()=>{if(!subCatForm.name.trim())return;update(prev=>({...prev,categories:prev.categories.map(c=>{if(c.id!==catId)return c;
-    const subs=subCatModal==='add'?[...c.subs,{id:uid(),name:subCatForm.name.trim(),max:parseFloat(subCatForm.max)||0,date:subCatForm.date}]
-      :c.subs.map(s=>s.id===subCatForm.id?{...s,name:subCatForm.name.trim(),max:parseFloat(subCatForm.max)||s.max,date:subCatForm.date}:s);return{...c,subs};})}));setSubCatModal(null);toast('บันทึกแล้ว','success');};
+  const saveCat=()=>{if(!catForm.name.trim())return;update(prev=>{if(catModal==='add')return{...prev,categories:[...prev.categories,{id:uid(),name:catForm.name.trim(),subjectId:catForm.subjectId||subjId,max:parseFloat(catForm.max)||0,subs:[]}]};return{...prev,categories:prev.categories.map(c=>c.id===catForm.id?{...c,name:catForm.name.trim(),max:parseFloat(catForm.max)||c.max}:c)};});setCatModal(null);toast('บันทึกแล้ว','success');};
+  const delCat=id=>{if(!window.confirm('ลบ?'))return;update(prev=>({...prev,categories:prev.categories.filter(c=>c.id!==id),scores:prev.scores.filter(r=>r.categoryId!==id)}));};
+  const saveSubCat=()=>{if(!subCatForm.name.trim())return;update(prev=>({...prev,categories:prev.categories.map(c=>{if(c.id!==catId)return c;const subs=subCatModal==='add'?[...c.subs,{id:uid(),name:subCatForm.name.trim(),max:parseFloat(subCatForm.max)||0,date:subCatForm.date}]:c.subs.map(s=>s.id===subCatForm.id?{...s,name:subCatForm.name.trim(),max:parseFloat(subCatForm.max)||s.max,date:subCatForm.date}:s);return{...c,subs};})}));setSubCatModal(null);toast('บันทึกแล้ว','success');};
   const delSubCat=sid=>{if(!window.confirm('ลบ?'))return;update(prev=>({...prev,categories:prev.categories.map(c=>c.id===catId?{...c,subs:c.subs.filter(s=>s.id!==sid)}:c),scores:prev.scores.filter(r=>!(r.categoryId===catId&&r.subId===sid))}));};
-  const saveSubj=()=>{if(!subjForm.name.trim())return;update(prev=>{if(subjModal==='add')return{...prev,subjects:[...prev.subjects,{id:uid(),name:subjForm.name.trim(),code:subjForm.code||'',credits:parseFloat(subjForm.credits)||1}]};
-    return{...prev,subjects:prev.subjects.map(s=>s.id===subjForm.id?{...s,name:subjForm.name.trim(),code:subjForm.code||'',credits:parseFloat(subjForm.credits)||s.credits}:s)};});setSubjModal(null);toast('บันทึกแล้ว','success');};
-  const delSubj=id=>{if(data.categories.some(c=>c.subjectId===id))return toast('มีหมวดคะแนนผูกอยู่','error');if(!window.confirm('ลบ?'))return;update(prev=>({...prev,subjects:prev.subjects.filter(s=>s.id!==id)}));};
+  const saveSubj=()=>{if(!subjForm.name.trim())return;update(prev=>{if(subjModal==='add')return{...prev,subjects:[...prev.subjects,{id:uid(),name:subjForm.name.trim(),code:subjForm.code||'',credits:parseFloat(subjForm.credits)||1}]};return{...prev,subjects:prev.subjects.map(s=>s.id===subjForm.id?{...s,name:subjForm.name.trim(),code:subjForm.code||'',credits:parseFloat(subjForm.credits)||s.credits}:s)};});setSubjModal(null);toast('บันทึกแล้ว','success');};
+  const delSubj=id=>{if(data.categories.some(c=>c.subjectId===id))return toast('มีหมวดผูกอยู่','error');if(!window.confirm('ลบ?'))return;update(prev=>({...prev,subjects:prev.subjects.filter(s=>s.id!==id)}));};
 
-  return(<div style={{padding:'14px 14px 100px'}}>
-    <div style={{fontWeight:700,fontSize:18,marginBottom:12,color:C.text}}>📊 คะแนน</div>
-    <div style={{display:'flex',gap:6,marginBottom:12,background:'white',padding:5,borderRadius:10,border:`1px solid ${C.border}`}}>
-      <button onClick={()=>setSub('entry')} style={{...sTab(sub==='entry'),flex:1}}>📝 บันทึก</button>
-      <button onClick={()=>setSub('cat')} style={{...sTab(sub==='cat'),flex:1}}>📋 หมวดหมู่</button>
-      <button onClick={()=>setSub('subj')} style={{...sTab(sub==='subj'),flex:1}}>📚 วิชา</button></div>
-
-    {sub==='entry'&&<><div style={sCard}>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
-        <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>วิชา</div><select value={subjId} onChange={e=>{setSubjId(e.target.value);setCatId('');setSubCatId('');}} style={{...sInp,fontFamily:'inherit'}}>
-          {data.subjects.map(s=><option key={s.id} value={s.id}>{s.name} ({s.credits})</option>)}</select></div>
-        <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ห้อง</div><select value={cls} onChange={e=>setCls(e.target.value)} style={{...sInp,fontFamily:'inherit'}}><option value="">-- เลือก --</option>
-          {classesHave.map(c=><option key={c} value={c}>{c}</option>)}</select></div></div>
-      <div style={{fontSize:12,color:C.muted,marginBottom:4}}>หมวดหลัก</div>
-      <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:cat?.subs?.length>0?8:0}}>
-        {subjCats.map(c=><button key={c.id} onClick={()=>{setCatId(c.id);setSubCatId('');}} style={{...sTab(catId===c.id),padding:'6px 12px',fontSize:13}}>{c.name} /{getCatMax(c)}</button>)}</div>
-      {cat?.subs?.length>0&&<div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>หมวดย่อย</div>
-        <div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{cat.subs.map(s=><button key={s.id} onClick={()=>setSubCatId(s.id)}
-          style={{...sTab(subCatId===s.id),padding:'6px 10px',fontSize:12}}>{s.name} /{s.max}</button>)}</div></div>}</div>
-
-      {canEnter()&&students.length>0&&<div style={sCard}>
-        <div style={{fontWeight:600,fontSize:15,marginBottom:2}}>{subCat?subCat.name:cat?.name} · {cls}</div>
-        <div style={{fontSize:12,color:C.muted,marginBottom:12}}>เต็ม {entryMax}</div>
-        {students.map((stu,i)=>{const saved=getScore(stu.id);const val=draft[stu.id]!==undefined?draft[stu.id]:saved;
-          const g=saved!==''?getGrade(parseFloat(saved),entryMax):null;
-          return(<div key={stu.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 0',borderBottom:`1px solid ${C.border}`}}>
-            <span style={{width:22,fontSize:12,color:C.muted,textAlign:'right'}}>{i+1}</span>
-            <span style={{flex:1,fontSize:14,fontWeight:500}}>{stu.nickname||stu.name}</span>
-            <input type="number" min={0} max={entryMax} value={val} placeholder="-"
-              onChange={e=>setDraft(p=>({...p,[stu.id]:e.target.value}))}
-              onBlur={()=>{if(draft[stu.id]!==undefined)saveScore(stu.id,draft[stu.id]);}}
-              onKeyDown={e=>{if(e.key==='Enter')saveScore(stu.id,draft[stu.id]??saved);}}
-              style={{width:60,padding:'6px 8px',borderRadius:6,border:`1.5px solid ${draft[stu.id]!==undefined?C.red:C.border}`,textAlign:'center',fontSize:14,fontFamily:'inherit'}}/>
-            <span style={{fontSize:12,color:C.muted}}>/{entryMax}</span>
-            {g&&<span style={{fontSize:12,fontWeight:700,color:gradeColor(g)}}>{g.label}</span>}</div>);})}
-      </div>}
-      {!cls&&<div style={{textAlign:'center',color:C.muted,padding:48}}>📊 เลือกวิชาและห้อง</div>}
-    </>}
-
-    {sub==='cat'&&<div>
-      <select value={subjId} onChange={e=>setSubjId(e.target.value)} style={{...sInp,marginBottom:10,fontFamily:'inherit'}}>
-        {data.subjects.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select>
-      <div style={{display:'flex',justifyContent:'space-between',marginBottom:8}}>
-        <div style={{fontSize:13,color:C.muted}}>รวม: <b>{subjMax}</b> คะแนน</div>
-        <button onClick={openCatAdd} style={sBtn(true,true)}>+ เพิ่มหมวด</button></div>
-      {subjCats.map(c=>(<div key={c.id} style={{...sCard,marginBottom:8}}>
-        <div style={{display:'flex',justifyContent:'space-between',marginBottom:c.subs?.length?8:0}}>
-          <div><div style={{fontWeight:700,fontSize:15}}>{c.name} <span style={{fontSize:13,color:C.muted,fontWeight:400}}>เต็ม {getCatMax(c)}</span></div></div>
-          <div style={{display:'flex',gap:5}}><button onClick={()=>{setCatForm({name:c.name,max:c.max,subjectId:c.subjectId,id:c.id});setCatModal('edit');}} style={sBtn(false,true)}>แก้ไข</button>
-            <button onClick={()=>delCat(c.id)} style={{...sBtn(false,true),color:'#dc2626'}}>ลบ</button></div></div>
-        {c.subs?.length>0&&<div style={{borderTop:`1px solid ${C.border}`,paddingTop:8}}>
-          <div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}>
-            <div style={{fontSize:12,color:C.muted,fontWeight:600}}>หมวดย่อย ({c.subs.length})</div>
-            <button onClick={()=>{setCatId(c.id);openSubAdd();}} style={{fontSize:11,color:C.red,background:'none',border:'none',cursor:'pointer',fontWeight:600,fontFamily:'inherit'}}>+ เพิ่ม</button></div>
-          {c.subs.map(s=><div key={s.id} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',borderTop:`1px solid ${C.border}`,fontSize:13}}>
-            <span>{s.name} <span style={{color:C.muted}}>/{s.max}{s.date?` · ${fmtDate(s.date)}`:''}</span></span>
-            <div style={{display:'flex',gap:4}}>
-              <button onClick={()=>{setCatId(c.id);setSubCatForm({...s});setSubCatModal('edit');}} style={{fontSize:11,color:C.text,background:C.light,border:'none',padding:'3px 8px',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>แก้ไข</button>
-              <button onClick={()=>{setCatId(c.id);delSubCat(s.id);}} style={{fontSize:11,color:'#dc2626',background:'#fff5f5',border:'none',padding:'3px 8px',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>ลบ</button></div></div>)}</div>}
-        {(!c.subs||!c.subs.length)&&<button onClick={()=>{setCatId(c.id);openSubAdd();}} style={{fontSize:12,color:C.red,background:'none',border:`1px dashed ${C.border}`,padding:6,borderRadius:6,width:'100%',cursor:'pointer',fontFamily:'inherit',marginTop:6}}>+ เพิ่มหมวดย่อย</button>}
-      </div>))}</div>}
-
-    {sub==='subj'&&<div>
-      <div style={{display:'flex',justifyContent:'space-between',marginBottom:10}}>
-        <div style={{fontSize:13,color:C.muted}}>{data.subjects.length} วิชา</div>
-        <button onClick={()=>{setSubjForm({name:'',code:'',credits:'1'});setSubjModal('add');}} style={sBtn(true,true)}>+ เพิ่มวิชา</button></div>
-      {data.subjects.map(s=><div key={s.id} style={{...sCard,marginBottom:8,display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-        <div><div style={{fontWeight:700,fontSize:15}}>{s.name} {s.code&&<span style={{fontSize:12,color:C.muted}}>({s.code})</span>}</div>
-          <div style={{fontSize:12,color:C.muted}}>{s.credits} หน่วยกิต · {data.categories.filter(c=>c.subjectId===s.id).length} หมวด</div></div>
-        <div style={{display:'flex',gap:5}}><button onClick={()=>{setSubjForm({...s});setSubjModal('edit');}} style={sBtn(false,true)}>แก้ไข</button>
-          <button onClick={()=>delSubj(s.id)} style={{...sBtn(false,true),color:'#dc2626'}}>ลบ</button></div></div>)}</div>}
-
-    <Sheet open={!!catModal} title={catModal==='add'?'➕ เพิ่มหมวด':'✏️ แก้ไข'} onClose={()=>setCatModal(null)}>
-      <input value={catForm.name} onChange={e=>setCatForm(p=>({...p,name:e.target.value}))} style={{...sInp,marginBottom:8}} placeholder="ชื่อหมวด"/>
-      <input type="number" value={catForm.max} onChange={e=>setCatForm(p=>({...p,max:e.target.value}))} style={{...sInp,marginBottom:14}} placeholder="คะแนนเต็ม"/>
-      <div style={{display:'flex',gap:8}}><button onClick={()=>setCatModal(null)} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={saveCat} style={{...sBtn(true),flex:1}}>บันทึก</button></div></Sheet>
-    <Sheet open={!!subCatModal} title={subCatModal==='add'?'➕ เพิ่มหมวดย่อย':'✏️ แก้ไข'} onClose={()=>setSubCatModal(null)}>
-      <input value={subCatForm.name} onChange={e=>setSubCatForm(p=>({...p,name:e.target.value}))} style={{...sInp,marginBottom:8}} placeholder="ชื่อ"/>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:14}}>
-        <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>คะแนนเต็ม</div><input type="number" value={subCatForm.max} onChange={e=>setSubCatForm(p=>({...p,max:e.target.value}))} style={sInp}/></div>
-        <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>วันที่</div><input type="date" value={subCatForm.date} onChange={e=>setSubCatForm(p=>({...p,date:e.target.value}))} style={sInp}/></div></div>
-      <div style={{display:'flex',gap:8}}><button onClick={()=>setSubCatModal(null)} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={saveSubCat} style={{...sBtn(true),flex:1}}>บันทึก</button></div></Sheet>
-    <Sheet open={!!subjModal} title={subjModal==='add'?'➕ เพิ่มวิชา':'✏️ แก้ไข'} onClose={()=>setSubjModal(null)}>
-      <input value={subjForm.name} onChange={e=>setSubjForm(p=>({...p,name:e.target.value}))} style={{...sInp,marginBottom:8}} placeholder="ชื่อวิชา"/>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:14}}>
-        <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>รหัสวิชา</div><input value={subjForm.code} onChange={e=>setSubjForm(p=>({...p,code:e.target.value}))} style={sInp}/></div>
-        <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>หน่วยกิต</div><input type="number" step="0.5" value={subjForm.credits} onChange={e=>setSubjForm(p=>({...p,credits:e.target.value}))} style={sInp}/></div></div>
-      <div style={{display:'flex',gap:8}}><button onClick={()=>setSubjModal(null)} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={saveSubj} style={{...sBtn(true),flex:1}}>บันทึก</button></div></Sheet>
-  </div>);}
+  return(<div style={{padding:'14px 14px 100px'}}><div style={{fontWeight:700,fontSize:18,marginBottom:12,color:C.text}}>📊 คะแนน</div>
+    <div style={{display:'flex',gap:6,marginBottom:12,background:'white',padding:5,borderRadius:10,border:`1px solid ${C.border}`}}><button onClick={()=>setSub('entry')} style={{...sTab(sub==='entry'),flex:1}}>📝 บันทึก</button><button onClick={()=>setSub('cat')} style={{...sTab(sub==='cat'),flex:1}}>📋 หมวดหมู่</button><button onClick={()=>setSub('subj')} style={{...sTab(sub==='subj'),flex:1}}>📚 วิชา</button></div>
+    {sub==='entry'&&<><div style={sCard}><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>วิชา</div><select value={subjId} onChange={e=>{setSubjId(e.target.value);setCatId('');setSubCatId('');}} style={{...sInp,fontFamily:'inherit'}}>{data.subjects.map(s=><option key={s.id} value={s.id}>{s.name} ({s.credits} นก. · {creditToHours(s.credits)} ชม./สป.)</option>)}</select></div>
+        <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ห้อง</div><select value={cls} onChange={e=>setCls(e.target.value)} style={{...sInp,fontFamily:'inherit'}}><option value="">-- เลือก --</option>{classesHave.map(c=><option key={c} value={c}>{c}</option>)}</select></div></div>
+      <div style={{fontSize:12,color:C.muted,marginBottom:4}}>หมวดหลัก</div><div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:cat?.subs?.length>0?8:0}}>{subjCats.map(c=><button key={c.id} onClick={()=>{setCatId(c.id);setSubCatId('');}} style={{...sTab(catId===c.id),padding:'6px 12px',fontSize:13}}>{c.name} /{getCatMax(c)}</button>)}</div>
+      {cat?.subs?.length>0&&<div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>หมวดย่อย</div><div style={{display:'flex',gap:6,flexWrap:'wrap'}}>{cat.subs.map(s=><button key={s.id} onClick={()=>setSubCatId(s.id)} style={{...sTab(subCatId===s.id),padding:'6px 10px',fontSize:12}}>{s.name} /{s.max}</button>)}</div></div>}</div>
+      {canEnter()&&students.length>0&&<div style={sCard}><div style={{fontWeight:600,fontSize:15,marginBottom:2}}>{subCat?subCat.name:cat?.name} · {cls}</div><div style={{fontSize:12,color:C.muted,marginBottom:12}}>เต็ม {entryMax}</div>
+        {students.map((stu,i)=>{const saved=getScore(stu.id);const val=draft[stu.id]!==undefined?draft[stu.id]:saved;const g=saved!==''?getGrade(parseFloat(saved),entryMax):null;
+          return(<div key={stu.id} style={{display:'flex',alignItems:'center',gap:10,padding:'8px 0',borderBottom:`1px solid ${C.border}`}}><span style={{width:22,fontSize:12,color:C.muted,textAlign:'right'}}>{i+1}</span><span style={{flex:1,fontSize:14,fontWeight:500}}>{stu.nickname||stu.name}</span>
+            <input type="number" min={0} max={entryMax} value={val} placeholder="-" onChange={e=>setDraft(p=>({...p,[stu.id]:e.target.value}))} onBlur={()=>{if(draft[stu.id]!==undefined)saveScore(stu.id,draft[stu.id]);}} onKeyDown={e=>{if(e.key==='Enter')saveScore(stu.id,draft[stu.id]??saved);}} style={{width:60,padding:'6px 8px',borderRadius:6,border:`1.5px solid ${draft[stu.id]!==undefined?C.red:C.border}`,textAlign:'center',fontSize:14,fontFamily:'inherit'}}/>
+            <span style={{fontSize:12,color:C.muted}}>/{entryMax}</span>{g&&<span style={{fontSize:12,fontWeight:700,color:gradeColor(g)}}>{g.label}</span>}</div>);})}
+      </div>}{!cls&&<div style={{textAlign:'center',color:C.muted,padding:48}}>📊 เลือกวิชาและห้อง</div>}</>}
+    {sub==='cat'&&<div><select value={subjId} onChange={e=>setSubjId(e.target.value)} style={{...sInp,marginBottom:10,fontFamily:'inherit'}}>{data.subjects.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}</select>
+      <div style={{display:'flex',justifyContent:'space-between',marginBottom:8}}><div style={{fontSize:13,color:C.muted}}>รวม: <b>{subjMax}</b></div><button onClick={()=>{setCatForm({name:'',max:'20',subjectId:subjId});setCatModal('add');}} style={sBtn(true,true)}>+ เพิ่มหมวด</button></div>
+      {subjCats.map(c=>(<div key={c.id} style={{...sCard,marginBottom:8}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:c.subs?.length?8:0}}><div><div style={{fontWeight:700,fontSize:15}}>{c.name} <span style={{fontSize:13,color:C.muted,fontWeight:400}}>/{getCatMax(c)}</span></div></div>
+        <div style={{display:'flex',gap:5}}><button onClick={()=>{setCatForm({name:c.name,max:c.max,subjectId:c.subjectId,id:c.id});setCatModal('edit');}} style={sBtn(false,true)}>แก้ไข</button><button onClick={()=>delCat(c.id)} style={{...sBtn(false,true),color:'#dc2626'}}>ลบ</button></div></div>
+        {c.subs?.length>0&&<div style={{borderTop:`1px solid ${C.border}`,paddingTop:8}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:6}}><div style={{fontSize:12,color:C.muted,fontWeight:600}}>หมวดย่อย ({c.subs.length})</div><button onClick={()=>{setCatId(c.id);setSubCatForm({name:'',max:'5',date:todayStr()});setSubCatModal('add');}} style={{fontSize:11,color:C.red,background:'none',border:'none',cursor:'pointer',fontWeight:600,fontFamily:'inherit'}}>+ เพิ่ม</button></div>
+          {c.subs.map(s=><div key={s.id} style={{display:'flex',justifyContent:'space-between',padding:'5px 0',borderTop:`1px solid ${C.border}`,fontSize:13}}><span>{s.name} <span style={{color:C.muted}}>/{s.max}{s.date?` · ${fmtDate(s.date)}`:''}</span></span><div style={{display:'flex',gap:4}}><button onClick={()=>{setCatId(c.id);setSubCatForm({...s});setSubCatModal('edit');}} style={{fontSize:11,color:C.text,background:C.light,border:'none',padding:'3px 8px',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>แก้ไข</button><button onClick={()=>{setCatId(c.id);delSubCat(s.id);}} style={{fontSize:11,color:'#dc2626',background:'#fff5f5',border:'none',padding:'3px 8px',borderRadius:4,cursor:'pointer',fontFamily:'inherit'}}>ลบ</button></div></div>)}</div>}
+        {(!c.subs||!c.subs.length)&&<button onClick={()=>{setCatId(c.id);setSubCatForm({name:'',max:'5',date:todayStr()});setSubCatModal('add');}} style={{fontSize:12,color:C.red,background:'none',border:`1px dashed ${C.border}`,padding:6,borderRadius:6,width:'100%',cursor:'pointer',fontFamily:'inherit',marginTop:6}}>+ เพิ่มหมวดย่อย</button>}</div>))}</div>}
+    {sub==='subj'&&<div><div style={{display:'flex',justifyContent:'space-between',marginBottom:10}}><div style={{fontSize:13,color:C.muted}}>{data.subjects.length} วิชา</div><button onClick={()=>{setSubjForm({name:'',code:'',credits:1});setSubjModal('add');}} style={sBtn(true,true)}>+ เพิ่มวิชา</button></div>
+      {data.subjects.map(s=><div key={s.id} style={{...sCard,marginBottom:8,display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:700,fontSize:15}}>{s.name} {s.code&&<span style={{fontSize:12,color:C.muted}}>({s.code})</span>}</div><div style={{fontSize:12,color:C.muted}}>{s.credits} หน่วยกิต · {creditToHours(s.credits)} ชม./สัปดาห์ · {data.categories.filter(c=>c.subjectId===s.id).length} หมวด</div></div>
+        <div style={{display:'flex',gap:5}}><button onClick={()=>{setSubjForm({...s});setSubjModal('edit');}} style={sBtn(false,true)}>แก้ไข</button><button onClick={()=>delSubj(s.id)} style={{...sBtn(false,true),color:'#dc2626'}}>ลบ</button></div></div>)}</div>}
+    <Sheet open={!!catModal} title={catModal==='add'?'➕ เพิ่มหมวด':'✏️ แก้ไข'} onClose={()=>setCatModal(null)}><input value={catForm.name} onChange={e=>setCatForm(p=>({...p,name:e.target.value}))} style={{...sInp,marginBottom:8}} placeholder="ชื่อหมวด"/><input type="number" value={catForm.max} onChange={e=>setCatForm(p=>({...p,max:e.target.value}))} style={{...sInp,marginBottom:14}} placeholder="คะแนนเต็ม"/><div style={{display:'flex',gap:8}}><button onClick={()=>setCatModal(null)} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={saveCat} style={{...sBtn(true),flex:1}}>บันทึก</button></div></Sheet>
+    <Sheet open={!!subCatModal} title={subCatModal==='add'?'➕ หมวดย่อย':'✏️ แก้ไข'} onClose={()=>setSubCatModal(null)}><input value={subCatForm.name} onChange={e=>setSubCatForm(p=>({...p,name:e.target.value}))} style={{...sInp,marginBottom:8}} placeholder="ชื่อ"/><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:14}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>เต็ม</div><input type="number" value={subCatForm.max} onChange={e=>setSubCatForm(p=>({...p,max:e.target.value}))} style={sInp}/></div><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>วันที่</div><input type="date" value={subCatForm.date} onChange={e=>setSubCatForm(p=>({...p,date:e.target.value}))} style={sInp}/></div></div><div style={{display:'flex',gap:8}}><button onClick={()=>setSubCatModal(null)} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={saveSubCat} style={{...sBtn(true),flex:1}}>บันทึก</button></div></Sheet>
+    <Sheet open={!!subjModal} title={subjModal==='add'?'➕ เพิ่มวิชา':'✏️ แก้ไข'} onClose={()=>setSubjModal(null)}><input value={subjForm.name} onChange={e=>setSubjForm(p=>({...p,name:e.target.value}))} style={{...sInp,marginBottom:8}} placeholder="ชื่อวิชา"/>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>รหัสวิชา</div><input value={subjForm.code} onChange={e=>setSubjForm(p=>({...p,code:e.target.value}))} style={sInp} placeholder="จ20201"/></div>
+        <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>หน่วยกิต</div><select value={subjForm.credits} onChange={e=>setSubjForm(p=>({...p,credits:parseFloat(e.target.value)}))} style={{...sInp,fontFamily:'inherit'}}>{CREDIT_OPTIONS.map(c=><option key={c} value={c}>{c} นก. ({creditToHours(c)} ชม./สป.)</option>)}</select></div></div>
+      <div style={{background:C.light,borderRadius:8,padding:'8px 12px',fontSize:12,color:C.muted,marginBottom:14}}>💡 0.5 หน่วยกิต = 1 ชม./สัปดาห์ (1 คาบ) · สูงสุด 2.5 หน่วยกิต = 5 ชม./สัปดาห์ (5 คาบ)</div>
+      <div style={{display:'flex',gap:8}}><button onClick={()=>setSubjModal(null)} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={saveSubj} style={{...sBtn(true),flex:1}}>บันทึก</button></div></Sheet></div>);}
 
 // ===== STUDENTS =====
-function StudentsPage({data,update,toast}){
-  const[sub,setSub]=useState('list');const[cls,setCls]=useState('');const[search,setSearch]=useState('');
-  const[modal,setModal]=useState(null);const[form,setForm]=useState({});const[err,setErr]=useState('');
-  const[clsModal,setClsModal]=useState(null);const[clsForm,setClsForm]=useState({name:'',oldName:''});
+function StudentsPage({data,update,toast}){const[sub,setSub]=useState('list');const[cls,setCls]=useState('');const[search,setSearch]=useState('');const[modal,setModal]=useState(null);const[form,setForm]=useState({});const[err,setErr]=useState('');const[clsModal,setClsModal]=useState(null);const[clsForm,setClsForm]=useState({name:'',oldName:''});
   const students=data.students.filter(s=>(cls?s.classId===cls:true)&&(search?s.name.includes(search)||s.id.includes(search)||(s.nickname||'').includes(search):true));
   const openAdd=()=>{setForm({id:'',name:'',nickname:'',classId:cls||data.classes[0]||'',pin:randomPin()});setErr('');setModal('add');};
-  const save=()=>{if(!form.id.trim()||!form.name.trim()||!form.classId)return setErr('กรอกให้ครบ');if(!/^\d{4}$/.test(form.pin))return setErr('PIN ต้อง 4 หลัก');
-    if(modal==='add'&&data.students.find(s=>s.id===form.id.trim()))return setErr('รหัสซ้ำ');
-    update(prev=>{const sts=modal==='add'?[...prev.students,{...form,id:form.id.trim()}]:prev.students.map(s=>s.id===form.id?{...form}:s);return{...prev,students:sts};});setModal(null);toast('บันทึกแล้ว','success');};
+  const save=()=>{if(!form.id.trim()||!form.name.trim()||!form.classId)return setErr('กรอกให้ครบ');if(!/^\d{4}$/.test(form.pin))return setErr('PIN ต้อง 4 หลัก');if(modal==='add'&&data.students.find(s=>s.id===form.id.trim()))return setErr('รหัสซ้ำ');update(prev=>{const sts=modal==='add'?[...prev.students,{...form,id:form.id.trim()}]:prev.students.map(s=>s.id===form.id?{...form}:s);return{...prev,students:sts};});setModal(null);toast('บันทึกแล้ว','success');};
   const del=(id,name)=>{if(!window.confirm(`ลบ "${name}"?`))return;update(prev=>({...prev,students:prev.students.filter(s=>s.id!==id),attendance:prev.attendance.filter(a=>a.studentId!==id),scores:prev.scores.filter(r=>r.studentId!==id)}));};
   const resetPin=stu=>{const p=randomPin();if(!window.confirm(`PIN ใหม่ ${stu.name}: ${p}?`))return;update(prev=>({...prev,students:prev.students.map(s=>s.id===stu.id?{...s,pin:p}:s)}));toast(`PIN: ${p}`,'success');};
-  const saveClass=()=>{const n=clsForm.name.trim();if(!n)return;
-    if(clsModal==='add'){if(data.classes.includes(n))return toast('มีแล้ว','error');update(prev=>({...prev,classes:[...prev.classes,n]}));}
-    else update(prev=>({...prev,classes:prev.classes.map(c=>c===clsForm.oldName?n:c),students:prev.students.map(s=>s.classId===clsForm.oldName?{...s,classId:n}:s),homeroom:prev.homeroom===clsForm.oldName?n:prev.homeroom}));
-    setClsModal(null);toast('บันทึกแล้ว','success');};
+  const saveClass=()=>{const n=clsForm.name.trim();if(!n)return;if(clsModal==='add'){if(data.classes.includes(n))return toast('มีแล้ว','error');update(prev=>({...prev,classes:[...prev.classes,n]}));}else update(prev=>({...prev,classes:prev.classes.map(c=>c===clsForm.oldName?n:c),students:prev.students.map(s=>s.classId===clsForm.oldName?{...s,classId:n}:s),homeroom:prev.homeroom===clsForm.oldName?n:prev.homeroom}));setClsModal(null);toast('บันทึก ✓','success');};
   const delClass=c=>{if(data.students.some(s=>s.classId===c))return toast('มีนักเรียนอยู่','error');if(!window.confirm(`ลบ ${c}?`))return;update(prev=>({...prev,classes:prev.classes.filter(x=>x!==c)}));};
-
-  return(<div style={{padding:'14px 14px 100px'}}>
-    <div style={{fontWeight:700,fontSize:18,marginBottom:12,color:C.text}}>👥 นักเรียน</div>
-    <div style={{display:'flex',gap:6,marginBottom:12,background:'white',padding:5,borderRadius:10,border:`1px solid ${C.border}`}}>
-      <button onClick={()=>setSub('list')} style={{...sTab(sub==='list'),flex:1}}>👥 รายชื่อ</button>
-      <button onClick={()=>setSub('class')} style={{...sTab(sub==='class'),flex:1}}>🏫 ห้อง</button></div>
-
+  return(<div style={{padding:'14px 14px 100px'}}><div style={{fontWeight:700,fontSize:18,marginBottom:12,color:C.text}}>👥 นักเรียน</div>
+    <div style={{display:'flex',gap:6,marginBottom:12,background:'white',padding:5,borderRadius:10,border:`1px solid ${C.border}`}}><button onClick={()=>setSub('list')} style={{...sTab(sub==='list'),flex:1}}>👥 รายชื่อ</button><button onClick={()=>setSub('class')} style={{...sTab(sub==='class'),flex:1}}>🏫 ห้อง</button></div>
     {sub==='list'&&<><button onClick={openAdd} style={{...sBtn(true),width:'100%',marginBottom:10}}>+ เพิ่มนักเรียน</button>
-      <div style={sCard}><select value={cls} onChange={e=>setCls(e.target.value)} style={{...sInp,marginBottom:8,fontFamily:'inherit'}}>
-        <option value="">ทุกห้อง ({data.students.length})</option>{data.classes.map(c=><option key={c} value={c}>{c} ({data.students.filter(s=>s.classId===c).length})</option>)}</select>
-        <input placeholder="🔍 ค้นหา..." value={search} onChange={e=>setSearch(e.target.value)} style={sInp}/></div>
-      {students.map(stu=>(<div key={stu.id} style={{...sCard,marginBottom:6,padding:'12px 14px'}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-          <div style={{flex:1,minWidth:0}}><div style={{fontWeight:600,fontSize:15}}>{stu.name} {stu.nickname&&<span style={{color:C.red,fontSize:13}}>({stu.nickname})</span>}</div>
-            <div style={{fontSize:12,color:C.muted}}>{stu.id} · {stu.classId}</div></div>
-          <div style={{display:'flex',gap:4}}>
-            <button onClick={()=>resetPin(stu)} style={{...sBtn(false,true),padding:'6px 8px'}}>🔑</button>
-            <button onClick={()=>{setForm({...stu});setErr('');setModal('edit');}} style={{...sBtn(false,true),padding:'6px 10px'}}>แก้ไข</button>
-            <button onClick={()=>del(stu.id,stu.name)} style={{...sBtn(false,true),color:'#dc2626',padding:'6px 10px'}}>ลบ</button></div></div></div>))}
-      {!students.length&&<div style={{textAlign:'center',color:C.muted,padding:40}}>ไม่พบ</div>}</>}
-
-    {sub==='class'&&<><div style={{display:'flex',justifyContent:'space-between',marginBottom:10}}>
-      <div style={{fontSize:13,color:C.muted}}>ประจำชั้น <b style={{color:C.red}}>{data.homeroom}</b></div>
-      <button onClick={()=>{setClsForm({name:'',oldName:''});setClsModal('add');}} style={sBtn(true,true)}>+ เพิ่มห้อง</button></div>
-      {data.classes.map(c=>{const ct=data.students.filter(s=>s.classId===c).length;return(<div key={c} style={{...sCard,marginBottom:6,padding:'12px 14px',display:'flex',justifyContent:'space-between',alignItems:'center',borderLeft:c===data.homeroom?`4px solid ${C.red}`:`1px solid ${C.border}`}}>
-        <div><div style={{fontWeight:700,fontSize:15}}>{c} {c===data.homeroom&&<span style={{fontSize:11,color:C.red}}>★</span>}</div><div style={{fontSize:12,color:C.muted}}>{ct} คน</div></div>
-        <div style={{display:'flex',gap:5}}><button onClick={()=>{setClsForm({name:c,oldName:c});setClsModal('edit');}} style={sBtn(false,true)}>แก้ไข</button>
-          <button onClick={()=>delClass(c)} disabled={ct>0} style={{...sBtn(false,true),color:ct?'#aaa':'#dc2626',cursor:ct?'not-allowed':'pointer'}}>ลบ</button></div></div>);})}</>}
-
-    <Sheet open={!!modal} title={modal==='add'?'➕ เพิ่มนักเรียน':'✏️ แก้ไข'} onClose={()=>setModal(null)}>
-      <input value={form.id||''} onChange={e=>setForm(p=>({...p,id:e.target.value}))} disabled={modal==='edit'} style={{...sInp,marginBottom:8,opacity:modal==='edit'?0.6:1}} placeholder="รหัสนักเรียน *"/>
-      <input value={form.name||''} onChange={e=>setForm(p=>({...p,name:e.target.value}))} style={{...sInp,marginBottom:8}} placeholder="ชื่อ-สกุล *"/>
-      <input value={form.nickname||''} onChange={e=>setForm(p=>({...p,nickname:e.target.value}))} style={{...sInp,marginBottom:8}} placeholder="ชื่อเล่น"/>
-      <select value={form.classId||''} onChange={e=>setForm(p=>({...p,classId:e.target.value}))} style={{...sInp,marginBottom:8,fontFamily:'inherit'}}>
-        <option value="">-- ห้อง --</option>{data.classes.map(c=><option key={c} value={c}>{c}</option>)}</select>
-      <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}><span style={{fontSize:12,color:C.muted}}>PIN 4 หลัก *</span>
-        <button onClick={()=>setForm(p=>({...p,pin:randomPin()}))} style={{fontSize:11,color:C.red,background:'none',border:'none',cursor:'pointer',fontFamily:'inherit'}}>🎲 สุ่ม</button></div>
+      <div style={sCard}><select value={cls} onChange={e=>setCls(e.target.value)} style={{...sInp,marginBottom:8,fontFamily:'inherit'}}><option value="">ทุกห้อง ({data.students.length})</option>{data.classes.map(c=><option key={c} value={c}>{c} ({data.students.filter(s=>s.classId===c).length})</option>)}</select><input placeholder="🔍 ค้นหา..." value={search} onChange={e=>setSearch(e.target.value)} style={sInp}/></div>
+      {students.map(stu=>(<div key={stu.id} style={{...sCard,marginBottom:6,padding:'12px 14px'}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div style={{flex:1,minWidth:0}}><div style={{fontWeight:600,fontSize:15}}>{stu.name} {stu.nickname&&<span style={{color:C.red,fontSize:13}}>({stu.nickname})</span>}</div><div style={{fontSize:12,color:C.muted}}>{stu.id} · {stu.classId}</div></div>
+        <div style={{display:'flex',gap:4}}><button onClick={()=>resetPin(stu)} style={{...sBtn(false,true),padding:'6px 8px'}}>🔑</button><button onClick={()=>{setForm({...stu});setErr('');setModal('edit');}} style={{...sBtn(false,true),padding:'6px 10px'}}>แก้ไข</button><button onClick={()=>del(stu.id,stu.name)} style={{...sBtn(false,true),color:'#dc2626',padding:'6px 10px'}}>ลบ</button></div></div></div>))}</>}
+    {sub==='class'&&<><div style={{display:'flex',justifyContent:'space-between',marginBottom:10}}><div style={{fontSize:13,color:C.muted}}>ประจำชั้น <b style={{color:C.red}}>{data.homeroom}</b></div><button onClick={()=>{setClsForm({name:'',oldName:''});setClsModal('add');}} style={sBtn(true,true)}>+ เพิ่มห้อง</button></div>
+      {data.classes.map(c=>{const ct=data.students.filter(s=>s.classId===c).length;return(<div key={c} style={{...sCard,marginBottom:6,padding:'12px 14px',display:'flex',justifyContent:'space-between',alignItems:'center',borderLeft:c===data.homeroom?`4px solid ${C.red}`:`1px solid ${C.border}`}}><div><div style={{fontWeight:700,fontSize:15}}>{c} {c===data.homeroom&&<span style={{fontSize:11,color:C.red}}>★</span>}</div><div style={{fontSize:12,color:C.muted}}>{ct} คน</div></div>
+        <div style={{display:'flex',gap:5}}><button onClick={()=>{setClsForm({name:c,oldName:c});setClsModal('edit');}} style={sBtn(false,true)}>แก้ไข</button><button onClick={()=>delClass(c)} disabled={ct>0} style={{...sBtn(false,true),color:ct?'#aaa':'#dc2626',cursor:ct?'not-allowed':'pointer'}}>ลบ</button></div></div>);})}</>}
+    <Sheet open={!!modal} title={modal==='add'?'➕ เพิ่มนักเรียน':'✏️ แก้ไข'} onClose={()=>setModal(null)}><input value={form.id||''} onChange={e=>setForm(p=>({...p,id:e.target.value}))} disabled={modal==='edit'} style={{...sInp,marginBottom:8,opacity:modal==='edit'?0.6:1}} placeholder="รหัสนักเรียน *"/><input value={form.name||''} onChange={e=>setForm(p=>({...p,name:e.target.value}))} style={{...sInp,marginBottom:8}} placeholder="ชื่อ-สกุล *"/><input value={form.nickname||''} onChange={e=>setForm(p=>({...p,nickname:e.target.value}))} style={{...sInp,marginBottom:8}} placeholder="ชื่อเล่น"/><select value={form.classId||''} onChange={e=>setForm(p=>({...p,classId:e.target.value}))} style={{...sInp,marginBottom:8,fontFamily:'inherit'}}><option value="">-- ห้อง --</option>{data.classes.map(c=><option key={c} value={c}>{c}</option>)}</select>
+      <div style={{display:'flex',justifyContent:'space-between',marginBottom:4}}><span style={{fontSize:12,color:C.muted}}>PIN 4 หลัก *</span><button onClick={()=>setForm(p=>({...p,pin:randomPin()}))} style={{fontSize:11,color:C.red,background:'none',border:'none',cursor:'pointer',fontFamily:'inherit'}}>🎲 สุ่ม</button></div>
       <input value={form.pin||''} maxLength={4} onChange={e=>setForm(p=>({...p,pin:e.target.value.replace(/\D/g,'').slice(0,4)}))} style={{...sInp,marginBottom:14,fontSize:18,letterSpacing:6,textAlign:'center',fontWeight:700}}/>
       {err&&<div style={{color:C.red,fontSize:13,marginBottom:10,padding:'6px 10px',background:'#fff0f0',borderRadius:6}}>{err}</div>}
       <div style={{display:'flex',gap:8}}><button onClick={()=>setModal(null)} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={save} style={{...sBtn(true),flex:1}}>บันทึก</button></div></Sheet>
-    <Sheet open={!!clsModal} title={clsModal==='add'?'➕ เพิ่มห้อง':'✏️ แก้ไข'} onClose={()=>setClsModal(null)}>
-      <input value={clsForm.name} onChange={e=>setClsForm(p=>({...p,name:e.target.value}))} style={{...sInp,marginBottom:14}} placeholder="เช่น ม.1/4" autoFocus/>
-      <div style={{display:'flex',gap:8}}><button onClick={()=>setClsModal(null)} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={saveClass} style={{...sBtn(true),flex:1}}>บันทึก</button></div></Sheet>
-  </div>);}
+    <Sheet open={!!clsModal} title={clsModal==='add'?'➕ เพิ่มห้อง':'✏️ แก้ไข'} onClose={()=>setClsModal(null)}><input value={clsForm.name} onChange={e=>setClsForm(p=>({...p,name:e.target.value}))} style={{...sInp,marginBottom:14}} placeholder="เช่น ม.1/4" autoFocus/><div style={{display:'flex',gap:8}}><button onClick={()=>setClsModal(null)} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={saveClass} style={{...sBtn(true),flex:1}}>บันทึก</button></div></Sheet></div>);}
 
 // ===== STATS =====
-function StatsPage({data}){
-  const[sub,setSub]=useState('morning');const[cls,setCls]=useState('');const[range,setRange]=useState('term');
-  const classesHave=data.classes.filter(c=>data.students.some(s=>s.classId===c));
-  const students=cls?data.students.filter(s=>s.classId===cls):data.students;
+function StatsPage({data}){const[sub,setSub]=useState('morning');const[cls,setCls]=useState('');const[range,setRange]=useState('term');const classesHave=data.classes.filter(c=>data.students.some(s=>s.classId===c));const students=cls?data.students.filter(s=>s.classId===cls):data.students;
   const filteredAtt=useMemo(()=>data.attendance.filter(a=>dateInRange(a.date,range)),[data.attendance,range]);
   const ranges=[{id:'today',label:'วันนี้'},{id:'week',label:'สัปดาห์'},{id:'month',label:'เดือน'},{id:'term',label:'ทั้งภาค'}];
+  const morningStats=useMemo(()=>students.map(stu=>{const att=filteredAtt.filter(a=>a.studentId===stu.id&&a.type==='morning');const counts={};S_ORDER.forEach(k=>counts[k]=0);att.forEach(a=>{if(counts[a.status]!==undefined)counts[a.status]++;});const pct=att.length?Math.round((counts.present+counts.late)/att.length*100):null;return{stu,counts,total:att.length,pct};}).sort((a,b)=>(a.pct??101)-(b.pct??101)),[students,filteredAtt]);
+  const classStats=useMemo(()=>students.map(stu=>{const cd=calcConduct(stu.id,filteredAtt,data.conduct);const rate=calcAttRate(stu.id,filteredAtt);const eligible=rate===null||rate>=data.conduct.minAttPct;return{stu,...cd,rate,eligible};}).sort((a,b)=>(a.rate??101)-(b.rate??101)),[students,filteredAtt,data.conduct]);
+  const scoreStats=useMemo(()=>{const subj=data.subjects[0];return students.map(stu=>{const cats=data.categories.filter(c=>c.subjectId===subj?.id);const tot=cats.reduce((s,c)=>s+getCatScore(stu.id,c,data.scores,data.term,data.year),0);const mx=cats.reduce((s,c)=>s+getCatMax(c),0);const has=cats.some(c=>hasCatScore(stu.id,c,data.scores,data.term,data.year));const rate=calcAttRate(stu.id,data.attendance);const grade=has&&subj?getSubjectGrade(stu.id,subj,data.categories,data.scores,data.term,data.year,rate,data.conduct.minAttPct):null;return{stu,tot,mx,has,grade};}).sort((a,b)=>b.tot-a.tot);},[students,data]);
+  const gradeDist=useMemo(()=>{const d={'4':0,'3.5':0,'3':0,'2.5':0,'2':0,'1.5':0,'1':0,'0':0,'ร':0,'มส.':0};scoreStats.filter(s=>s.grade).forEach(s=>{if(d[s.grade.label]!==undefined)d[s.grade.label]++;});return d;},[scoreStats]);
+  return(<div style={{padding:'14px 14px 100px'}}><div style={{fontWeight:700,fontSize:18,marginBottom:12,color:C.text}}>📈 สถิติ</div>
+    <div style={{display:'flex',gap:6,marginBottom:10,background:'white',padding:5,borderRadius:10,border:`1px solid ${C.border}`}}><button onClick={()=>setSub('morning')} style={{...sTab(sub==='morning'),flex:1}}>🌅 แถว</button><button onClick={()=>setSub('class')} style={{...sTab(sub==='class'),flex:1}}>📚 คาบ</button><button onClick={()=>setSub('score')} style={{...sTab(sub==='score'),flex:1}}>📊 คะแนน</button></div>
+    <div style={{display:'flex',gap:6,marginBottom:10}}><select value={cls} onChange={e=>setCls(e.target.value)} style={{...sInp,flex:1,fontFamily:'inherit'}}><option value="">ทุกห้อง ({data.students.length})</option>{classesHave.map(c=><option key={c} value={c}>{c}</option>)}</select><select value={range} onChange={e=>setRange(e.target.value)} style={{...sInp,flex:1,fontFamily:'inherit'}}>{ranges.map(r=><option key={r.id} value={r.id}>{r.label}</option>)}</select></div>
+    {sub==='morning'&&morningStats.map(({stu,counts,total,pct})=>(<div key={stu.id} style={{...sCard,marginBottom:8}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:total?6:0}}><div><span style={{fontWeight:600,fontSize:14}}>{stu.nickname||stu.name}</span><span style={{fontSize:12,color:C.muted,marginLeft:6}}>{stu.classId}</span></div><span style={{fontWeight:700,fontSize:15,color:pct===null?C.muted:pct>=80?'#16a34a':'#dc2626'}}>{pct!==null?`${pct}%`:'-'}</span></div>{total>0&&<><div style={{height:6,borderRadius:3,background:'#f3f4f6',marginBottom:5,overflow:'hidden'}}><div style={{height:'100%',width:`${pct}%`,background:pct>=80?'#16a34a':'#dc2626',borderRadius:3}}/></div><div style={{display:'flex',gap:8,fontSize:11}}>{S_ORDER.map(k=>counts[k]>0?<span key={k} style={{color:STATUS[k].bg}}>{STATUS[k].short} {counts[k]}</span>:null)}</div></>}</div>))}
+    {sub==='class'&&classStats.map(({stu,score,counts,total,rate,eligible})=>(<div key={stu.id} style={{...sCard,marginBottom:8,borderLeft:!eligible?'4px solid #dc2626':undefined}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:total?6:0}}><div><span style={{fontWeight:600,fontSize:14}}>{stu.nickname||stu.name}</span><span style={{fontSize:12,color:C.muted,marginLeft:6}}>{stu.classId}</span>{!eligible&&<span style={{fontSize:10,color:'white',background:'#dc2626',padding:'2px 6px',borderRadius:8,marginLeft:6}}>มส.</span>}</div><div style={{textAlign:'right'}}><div style={{fontWeight:700,fontSize:15,color:rate===null?C.muted:rate>=80?'#16a34a':'#dc2626'}}>{rate??'-'}%</div>{total>0&&<div style={{fontSize:11,color:C.muted}}>จิตพิสัย {score>0?'+':''}{score}</div>}</div></div>{total>0&&<><div style={{height:6,borderRadius:3,background:'#f3f4f6',marginBottom:5,overflow:'hidden'}}><div style={{height:'100%',width:`${rate}%`,background:rate>=80?'#16a34a':'#dc2626',borderRadius:3}}/></div><div style={{display:'flex',gap:8,fontSize:11}}>{S_ORDER.map(k=>counts[k]>0?<span key={k} style={{color:STATUS[k].bg}}>{STATUS[k].short} {counts[k]}</span>:null)}</div></>}</div>))}
+    {sub==='score'&&<><div style={{...sCard,padding:14}}><div style={{fontWeight:700,fontSize:14,marginBottom:10}}>📊 จำนวนแต่ละเกรด</div><div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:6}}>{Object.entries(gradeDist).map(([g,n])=>{const sp=g==='ร'||g==='มส.';return(<div key={g} style={{background:n>0?(sp?'#fee2e2':C.light):C.card,borderRadius:8,padding:'8px 4px',textAlign:'center',border:`1px solid ${n>0?'transparent':C.border}`}}><div style={{fontSize:18,fontWeight:700,color:sp?'#dc2626':C.text}}>{n}</div><div style={{fontSize:12,color:C.muted}}>{g}</div></div>);})}</div></div>
+      {scoreStats.map(({stu,tot,mx,has,grade})=>(<div key={stu.id} style={{...sCard,marginBottom:8,padding:'12px 14px'}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:has?6:0}}><div><span style={{fontWeight:600,fontSize:14}}>{stu.nickname||stu.name}</span><span style={{fontSize:12,color:C.muted,marginLeft:6}}>{stu.classId}</span></div><div style={{display:'flex',alignItems:'center',gap:8}}>{has&&<span style={{fontSize:14,fontWeight:600}}>{tot}/{mx}</span>}{grade&&<span style={{fontWeight:700,fontSize:13,padding:'3px 10px',borderRadius:8,background:gradeBg(grade),color:gradeColor(grade)}}>{grade.label}</span>}{!has&&<span style={{fontSize:12,color:C.muted}}>-</span>}</div></div>{has&&<div style={{height:6,borderRadius:3,background:'#f3f4f6',overflow:'hidden'}}><div style={{height:'100%',width:`${mx>0?(tot/mx)*100:0}%`,background:gradeColor(grade),borderRadius:3}}/></div>}</div>))}</>}</div>);}
 
-  const morningStats=useMemo(()=>students.map(stu=>{
-    const att=filteredAtt.filter(a=>a.studentId===stu.id&&a.type==='morning');const counts={};S_ORDER.forEach(k=>counts[k]=0);
-    att.forEach(a=>{if(counts[a.status]!==undefined)counts[a.status]++;});
-    const pct=att.length?Math.round((counts.present+counts.late)/att.length*100):null;return{stu,counts,total:att.length,pct};
-  }).sort((a,b)=>(a.pct??101)-(b.pct??101)),[students,filteredAtt]);
-
-  const classStats=useMemo(()=>students.map(stu=>{
-    const cd=calcConduct(stu.id,filteredAtt,data.conduct);const rate=calcAttRate(stu.id,filteredAtt);
-    const eligible=rate===null||rate>=data.conduct.minAttPct;return{stu,...cd,rate,eligible};
-  }).sort((a,b)=>(a.rate??101)-(b.rate??101)),[students,filteredAtt,data.conduct]);
-
-  const scoreStats=useMemo(()=>{const subj=data.subjects[0];
-    return students.map(stu=>{const cats=data.categories.filter(c=>c.subjectId===subj?.id);
-      const tot=cats.reduce((s,c)=>s+getCatScore(stu.id,c,data.scores,data.term,data.year),0);
-      const mx=cats.reduce((s,c)=>s+getCatMax(c),0);
-      const has=cats.some(c=>hasCatScore(stu.id,c,data.scores,data.term,data.year));
-      const rate=calcAttRate(stu.id,data.attendance);
-      const grade=has&&subj?getSubjectGrade(stu.id,subj,data.categories,data.scores,data.term,data.year,rate,data.conduct.minAttPct):null;
-      return{stu,tot,mx,has,grade};}).sort((a,b)=>b.tot-a.tot);},[students,data]);
-
-  const gradeDist=useMemo(()=>{const d={'4':0,'3.5':0,'3':0,'2.5':0,'2':0,'1.5':0,'1':0,'0':0,'ร':0,'มส.':0};
-    scoreStats.filter(s=>s.grade).forEach(s=>{if(d[s.grade.label]!==undefined)d[s.grade.label]++;});return d;},[scoreStats]);
-
-  return(<div style={{padding:'14px 14px 100px'}}>
-    <div style={{fontWeight:700,fontSize:18,marginBottom:12,color:C.text}}>📈 สถิติ</div>
-    <div style={{display:'flex',gap:6,marginBottom:10,background:'white',padding:5,borderRadius:10,border:`1px solid ${C.border}`}}>
-      <button onClick={()=>setSub('morning')} style={{...sTab(sub==='morning'),flex:1}}>🌅 เข้าแถว</button>
-      <button onClick={()=>setSub('class')} style={{...sTab(sub==='class'),flex:1}}>📚 คาบ</button>
-      <button onClick={()=>setSub('score')} style={{...sTab(sub==='score'),flex:1}}>📊 คะแนน</button></div>
-    <div style={{display:'flex',gap:6,marginBottom:10}}>
-      <select value={cls} onChange={e=>setCls(e.target.value)} style={{...sInp,flex:1,fontFamily:'inherit'}}>
-        <option value="">ทุกห้อง ({data.students.length})</option>{classesHave.map(c=><option key={c} value={c}>{c}</option>)}</select>
-      <select value={range} onChange={e=>setRange(e.target.value)} style={{...sInp,flex:1,fontFamily:'inherit'}}>
-        {ranges.map(r=><option key={r.id} value={r.id}>{r.label}</option>)}</select></div>
-
-    {sub==='morning'&&morningStats.map(({stu,counts,total,pct})=>(<div key={stu.id} style={{...sCard,marginBottom:8}}>
-      <div style={{display:'flex',justifyContent:'space-between',marginBottom:total?6:0}}>
-        <div><span style={{fontWeight:600,fontSize:14}}>{stu.nickname||stu.name}</span><span style={{fontSize:12,color:C.muted,marginLeft:6}}>{stu.classId}</span></div>
-        <span style={{fontWeight:700,fontSize:15,color:pct===null?C.muted:pct>=80?'#16a34a':pct>=50?'#d97706':'#dc2626'}}>{pct!==null?`${pct}%`:'-'}</span></div>
-      {total>0&&<><div style={{height:6,borderRadius:3,background:'#f3f4f6',marginBottom:5,overflow:'hidden'}}><div style={{height:'100%',width:`${pct}%`,background:pct>=80?'#16a34a':'#dc2626',borderRadius:3}}/></div>
-        <div style={{display:'flex',gap:8,fontSize:11}}>{S_ORDER.map(k=>counts[k]>0?<span key={k} style={{color:STATUS[k].bg}}>{STATUS[k].short} {counts[k]}</span>:null)}</div></>}
-    </div>))}
-
-    {sub==='class'&&classStats.map(({stu,score,counts,total,rate,eligible})=>(<div key={stu.id} style={{...sCard,marginBottom:8,borderLeft:!eligible?'4px solid #dc2626':undefined}}>
-      <div style={{display:'flex',justifyContent:'space-between',marginBottom:total?6:0}}>
-        <div><span style={{fontWeight:600,fontSize:14}}>{stu.nickname||stu.name}</span><span style={{fontSize:12,color:C.muted,marginLeft:6}}>{stu.classId}</span>
-          {!eligible&&<span style={{fontSize:10,color:'white',background:'#dc2626',padding:'2px 6px',borderRadius:8,marginLeft:6}}>มส.</span>}</div>
-        <div style={{textAlign:'right'}}><div style={{fontWeight:700,fontSize:15,color:rate===null?C.muted:rate>=80?'#16a34a':'#dc2626'}}>{rate??'-'}%</div>
-          {total>0&&<div style={{fontSize:11,color:C.muted}}>จิตพิสัย {score>0?'+':''}{score}</div>}</div></div>
-      {total>0&&<><div style={{height:6,borderRadius:3,background:'#f3f4f6',marginBottom:5,overflow:'hidden'}}><div style={{height:'100%',width:`${rate}%`,background:rate>=80?'#16a34a':'#dc2626',borderRadius:3}}/></div>
-        <div style={{display:'flex',gap:8,fontSize:11}}>{S_ORDER.map(k=>counts[k]>0?<span key={k} style={{color:STATUS[k].bg}}>{STATUS[k].short} {counts[k]}</span>:null)}</div></>}
-    </div>))}
-
-    {sub==='score'&&<><div style={{...sCard,padding:14}}>
-      <div style={{fontWeight:700,fontSize:14,marginBottom:10}}>📊 จำนวนนักเรียนแต่ละเกรด</div>
-      <div style={{display:'grid',gridTemplateColumns:'repeat(5,1fr)',gap:6}}>
-        {Object.entries(gradeDist).map(([g,n])=>{const sp=g==='ร'||g==='มส.';return(<div key={g} style={{background:n>0?(sp?'#fee2e2':C.light):C.card,borderRadius:8,padding:'8px 4px',textAlign:'center',border:`1px solid ${n>0?'transparent':C.border}`}}>
-          <div style={{fontSize:18,fontWeight:700,color:sp?'#dc2626':C.text}}>{n}</div><div style={{fontSize:12,color:C.muted}}>{g}</div></div>);})}</div></div>
-      {scoreStats.map(({stu,tot,mx,has,grade})=>(<div key={stu.id} style={{...sCard,marginBottom:8,padding:'12px 14px'}}>
-        <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:has?6:0}}>
-          <div><span style={{fontWeight:600,fontSize:14}}>{stu.nickname||stu.name}</span><span style={{fontSize:12,color:C.muted,marginLeft:6}}>{stu.classId}</span></div>
-          <div style={{display:'flex',alignItems:'center',gap:8}}>
-            {has&&<span style={{fontSize:14,fontWeight:600}}>{tot}/{mx}</span>}
-            {grade&&<span style={{fontWeight:700,fontSize:13,padding:'3px 10px',borderRadius:8,background:gradeBg(grade),color:gradeColor(grade)}}>{grade.label}</span>}
-            {!has&&<span style={{fontSize:12,color:C.muted}}>-</span>}</div></div>
-        {has&&<div style={{height:6,borderRadius:3,background:'#f3f4f6',overflow:'hidden'}}><div style={{height:'100%',width:`${mx>0?(tot/mx)*100:0}%`,background:gradeColor(grade),borderRadius:3}}/></div>}
-      </div>))}</>}
-  </div>);}
+// ===== IMPORT/EXPORT =====
+function IOPage({data,update,toast}){const fileRef=useRef(null);const[preview,setPreview]=useState(null);
+  const exportJSON=()=>{const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=`chinese-class-${data.term}-${data.year}-${todayStr()}.json`;a.click();toast('ส่งออก JSON แล้ว','success');};
+  const exportExcel=async()=>{try{const XLSX=await import('xlsx');const wb=XLSX.utils.book_new();
+    const stuR=data.students.map(s=>({'รหัส':s.id,'ชื่อ-สกุล':s.name,'ชื่อเล่น':s.nickname||'','ห้อง':s.classId,'PIN':s.pin}));
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(stuR.length?stuR:[{}]),'นักเรียน');
+    const attR=data.attendance.map(a=>{const s=data.students.find(x=>x.id===a.studentId);const subj=data.subjects.find(x=>x.id===a.subjectId);return{'วันที่':a.date,'ประเภท':a.type==='morning'?'เข้าแถว':'คาบ','วิชา':subj?.name||'','คาบ':a.period||'','รหัส':a.studentId,'ชื่อ':s?.name||'','สถานะ':STATUS[a.status]?.label||a.status,'คะแนน':a.customScore??'','หมายเหตุ':a.note||''};});
+    XLSX.utils.book_append_sheet(wb,XLSX.utils.json_to_sheet(attR.length?attR:[{}]),'เช็คชื่อ');
+    XLSX.writeFile(wb,`chinese-class-${data.term}-${data.year}-${todayStr()}.xlsx`);toast('ส่งออก Excel แล้ว','success');
+  }catch(e){toast('Excel ไม่พร้อมใช้ ใช้ JSON แทน','error');exportJSON();}};
+  const importJSON=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target.result);if(d.students&&d.attendance){update(()=>d);toast('นำเข้าสำเร็จ','success');}else toast('ไฟล์ไม่ถูกต้อง','error');}catch{toast('อ่านไม่ได้','error');}};r.readAsText(f);e.target.value='';};
+  const importExcel=async e=>{const f=e.target.files[0];if(!f)return;try{const XLSX=await import('xlsx');const wb=XLSX.read(await f.arrayBuffer());const ws=wb.Sheets[wb.SheetNames.find(n=>n.includes('นักเรียน'))||wb.SheetNames[0]];
+    const rows=XLSX.utils.sheet_to_json(ws).map(r=>({id:String(r['รหัสนักเรียน']||r['รหัส']||'').trim(),name:String(r['ชื่อ-สกุล']||r['ชื่อ']||'').trim(),nickname:String(r['ชื่อเล่น']||'').trim(),classId:String(r['ห้อง']||'').trim(),pin:String(r['PIN']||'').trim()||randomPin()})).filter(s=>s.id&&s.name);
+    if(!rows.length)return toast('ไม่พบข้อมูล','error');setPreview(rows);}catch{toast('Excel ไม่พร้อมใช้ ใช้ JSON แทน','error');}e.target.value='';};
+  const confirmImport=mode=>{if(!preview)return;update(prev=>{const ex=new Map(prev.students.map(s=>[s.id,s]));const nc=new Set(prev.classes);
+    preview.forEach(s=>{const pin=/^\d{4}$/.test(s.pin)?s.pin:randomPin();if(ex.has(s.id)){if(mode==='replace')ex.set(s.id,{...ex.get(s.id),name:s.name,nickname:s.nickname,classId:s.classId,pin});}else ex.set(s.id,{...s,pin});if(s.classId&&!nc.has(s.classId))nc.add(s.classId);});
+    return{...prev,students:Array.from(ex.values()),classes:Array.from(nc)};});toast(`นำเข้า ${preview.length} รายการ`,'success');setPreview(null);};
+  return(<div style={{padding:'14px 14px 100px'}}><div style={{fontWeight:700,fontSize:18,marginBottom:12,color:C.text}}>📥 นำเข้า / ส่งออก</div>
+    <div style={sCard}><div style={{fontWeight:700,fontSize:15,marginBottom:6}}>📤 ส่งออกข้อมูล</div><div style={{fontSize:13,color:C.muted,marginBottom:12}}>ส่งออกข้อมูลทั้งหมด</div>
+      <div style={{display:'flex',gap:8}}><button onClick={exportExcel} style={{...sBtn(true),flex:1,padding:12}}>📊 Excel</button><button onClick={exportJSON} style={{...sBtn(false),flex:1,padding:12}}>📋 JSON</button></div></div>
+    <div style={sCard}><div style={{fontWeight:700,fontSize:15,marginBottom:6}}>📥 นำเข้านักเรียน</div>
+      <input ref={fileRef} type="file" accept=".json,.xlsx,.xls" onChange={e=>{const f=e.target.files[0];if(!f)return;if(f.name.endsWith('.json'))importJSON(e);else importExcel(e);}} style={{display:'none'}}/>
+      <button onClick={()=>fileRef.current?.click()} style={{...sBtn(true),width:'100%',padding:12}}>📤 เลือกไฟล์ (Excel หรือ JSON)</button></div>
+    <Sheet open={!!preview} title={`ตรวจสอบ (${preview?.length||0} รายการ)`} onClose={()=>setPreview(null)}>
+      {preview&&<div><div style={{maxHeight:'40vh',overflowY:'auto',marginBottom:14,border:`1px solid ${C.border}`,borderRadius:8}}>
+        {preview.slice(0,30).map((s,i)=><div key={i} style={{padding:'8px 12px',borderBottom:`1px solid ${C.border}`,fontSize:13}}><b>{s.name}</b>{s.nickname?` (${s.nickname})`:''} · {s.id} · {s.classId}
+          {data.students.some(x=>x.id===s.id)&&<span style={{color:'#d97706',marginLeft:8}}>มีอยู่แล้ว</span>}</div>)}</div>
+        <div style={{display:'flex',flexDirection:'column',gap:8}}><button onClick={()=>confirmImport('skip')} style={{...sBtn(true),padding:12}}>เพิ่มเฉพาะใหม่</button><button onClick={()=>confirmImport('replace')} style={{...sBtn(false),padding:12}}>เพิ่ม + อัปเดต</button><button onClick={()=>setPreview(null)} style={{...sBtn(false),padding:10,color:C.muted}}>ยกเลิก</button></div></div>}</Sheet></div>);}
 
 // ===== SETTINGS =====
-function SettingsPage({data,update,toast}){
-  const[form,setForm]=useState({term:data.term,year:data.year,homeroom:data.homeroom,password:'',
-    presentScore:data.conduct.presentScore,absentScore:data.conduct.absentScore,
-    lateGroup:data.conduct.lateGroup,latePenalty:data.conduct.latePenalty,minAttPct:data.conduct.minAttPct});
-  const save=()=>{update(prev=>({...prev,term:parseInt(form.term)||prev.term,year:parseInt(form.year)||prev.year,homeroom:form.homeroom,
-    password:form.password.trim()||prev.password,conduct:{presentScore:parseFloat(form.presentScore)||0,absentScore:parseFloat(form.absentScore)||0,
-      lateGroup:parseInt(form.lateGroup)||3,latePenalty:parseFloat(form.latePenalty)||0,minAttPct:parseInt(form.minAttPct)||20}}));
-    toast('บันทึกแล้ว','success');setForm(p=>({...p,password:''}));};
-  const wipe=()=>{if(!window.confirm('ล้างข้อมูลทั้งหมด?'))return;if(!window.confirm('ยืนยัน?'))return;update(()=>initData());toast('ล้างแล้ว','success');};
-
-  return(<div style={{padding:'14px 14px 100px'}}>
-    <div style={{fontWeight:700,fontSize:18,marginBottom:12,color:C.text}}>⚙️ ตั้งค่า</div>
-    <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:10}}>📅 ภาคเรียน</div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
-        <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ภาคเรียน</div><select value={form.term} onChange={e=>setForm(p=>({...p,term:e.target.value}))} style={sInp}><option value={1}>1</option><option value={2}>2</option></select></div>
-        <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ปี (พ.ศ.)</div><input type="number" value={form.year} onChange={e=>setForm(p=>({...p,year:e.target.value}))} style={sInp}/></div></div>
-      <div style={{fontSize:12,color:C.muted,marginBottom:4}}>ห้องประจำชั้น</div>
-      <select value={form.homeroom} onChange={e=>setForm(p=>({...p,homeroom:e.target.value}))} style={{...sInp,fontFamily:'inherit'}}>
-        {data.classes.map(c=><option key={c} value={c}>{c}</option>)}</select></div>
-    <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:4}}>🎯 จิตพิสัย (คาบเรียน)</div>
-      <div style={{fontSize:12,color:C.muted,marginBottom:10}}>ลา/กิจกรรม: +มา, -ขาด, 0=สาย</div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
-        <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>มา(+)</div><input type="number" step="0.5" value={form.presentScore} onChange={e=>setForm(p=>({...p,presentScore:e.target.value}))} style={sInp}/></div>
-        <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ขาด(-)</div><input type="number" step="0.5" value={form.absentScore} onChange={e=>setForm(p=>({...p,absentScore:e.target.value}))} style={sInp}/></div></div>
-      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}>
-        <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>สาย ทุก N ครั้ง</div><input type="number" value={form.lateGroup} onChange={e=>setForm(p=>({...p,lateGroup:e.target.value}))} style={sInp}/></div>
-        <div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>หักคะแนน</div><input type="number" step="0.5" value={form.latePenalty} onChange={e=>setForm(p=>({...p,latePenalty:e.target.value}))} style={sInp}/></div></div></div>
-    <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:8}}>🚨 มส. (ต่ำกว่า %)</div>
-      <input type="number" value={form.minAttPct} onChange={e=>setForm(p=>({...p,minAttPct:e.target.value}))} style={sInp}/></div>
-    <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:8}}>🔐 รหัสผ่าน</div>
-      <input type="password" value={form.password} onChange={e=>setForm(p=>({...p,password:e.target.value}))} style={sInp} placeholder="เว้นว่าง = ไม่เปลี่ยน"/></div>
+function SettingsPage({data,update,toast}){const[form,setForm]=useState({term:data.term,year:data.year,homeroom:data.homeroom,password:'',presentScore:data.conduct.presentScore,absentScore:data.conduct.absentScore,lateGroup:data.conduct.lateGroup,latePenalty:data.conduct.latePenalty,minAttPct:data.conduct.minAttPct});
+  const save=()=>{update(prev=>({...prev,term:parseInt(form.term)||prev.term,year:parseInt(form.year)||prev.year,homeroom:form.homeroom,password:form.password.trim()||prev.password,conduct:{presentScore:parseFloat(form.presentScore)||0,absentScore:parseFloat(form.absentScore)||0,lateGroup:parseInt(form.lateGroup)||3,latePenalty:parseFloat(form.latePenalty)||0,minAttPct:parseInt(form.minAttPct)||20}}));toast('บันทึกแล้ว','success');setForm(p=>({...p,password:''}));};
+  const wipe=()=>{if(!window.confirm('ล้างทั้งหมด?'))return;if(!window.confirm('ยืนยัน?'))return;update(()=>initData());toast('ล้างแล้ว','success');};
+  return(<div style={{padding:'14px 14px 100px'}}><div style={{fontWeight:700,fontSize:18,marginBottom:12,color:C.text}}>⚙️ ตั้งค่า</div>
+    <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:10}}>📅 ภาคเรียน</div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ภาคเรียน</div><select value={form.term} onChange={e=>setForm(p=>({...p,term:e.target.value}))} style={sInp}><option value={1}>1</option><option value={2}>2</option></select></div><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ปี (พ.ศ.)</div><input type="number" value={form.year} onChange={e=>setForm(p=>({...p,year:e.target.value}))} style={sInp}/></div></div>
+      <div style={{fontSize:12,color:C.muted,marginBottom:4}}>ห้องประจำชั้น</div><select value={form.homeroom} onChange={e=>setForm(p=>({...p,homeroom:e.target.value}))} style={{...sInp,fontFamily:'inherit'}}>{data.classes.map(c=><option key={c} value={c}>{c}</option>)}</select></div>
+    <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:4}}>🎯 จิตพิสัย</div><div style={{fontSize:12,color:C.muted,marginBottom:10}}>ลา/กิจกรรม: +มา, -ขาด, 0=สาย</div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>มา(+)</div><input type="number" step="0.5" value={form.presentScore} onChange={e=>setForm(p=>({...p,presentScore:e.target.value}))} style={sInp}/></div><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>ขาด(-)</div><input type="number" step="0.5" value={form.absentScore} onChange={e=>setForm(p=>({...p,absentScore:e.target.value}))} style={sInp}/></div></div>
+      <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8}}><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>สาย ทุก N ครั้ง</div><input type="number" value={form.lateGroup} onChange={e=>setForm(p=>({...p,lateGroup:e.target.value}))} style={sInp}/></div><div><div style={{fontSize:12,color:C.muted,marginBottom:4}}>หัก</div><input type="number" step="0.5" value={form.latePenalty} onChange={e=>setForm(p=>({...p,latePenalty:e.target.value}))} style={sInp}/></div></div></div>
+    <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:8}}>🚨 มส. (&lt;%)</div><input type="number" value={form.minAttPct} onChange={e=>setForm(p=>({...p,minAttPct:e.target.value}))} style={sInp}/></div>
+    <div style={sCard}><div style={{fontWeight:700,fontSize:14,marginBottom:8}}>🔐 รหัสผ่าน</div><input type="password" value={form.password} onChange={e=>setForm(p=>({...p,password:e.target.value}))} style={sInp} placeholder="เว้นว่าง = ไม่เปลี่ยน"/></div>
     <button onClick={save} style={{...sBtn(true),width:'100%',padding:14,fontSize:16,marginBottom:12}}>💾 บันทึก</button>
-    <button onClick={wipe} style={{width:'100%',padding:10,background:'#fff5f5',color:'#dc2626',border:'1px solid #fecaca',borderRadius:8,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>🗑 ล้างข้อมูลทั้งหมด</button>
-  </div>);}
+    <button onClick={wipe} style={{width:'100%',padding:10,background:'#fff5f5',color:'#dc2626',border:'1px solid #fecaca',borderRadius:8,fontWeight:600,cursor:'pointer',fontFamily:'inherit'}}>🗑 ล้างข้อมูลทั้งหมด</button></div>);}
 
-// ===== STUDENT APP =====
-function StudentApp({data,update,student,onLogout}){
-  const[tab,setTab]=useState('scores');const[pinModal,setPinModal]=useState(false);
-  const[pf,setPf]=useState({cur:'',n1:'',n2:''});const[pinErr,setPinErr]=useState('');
+// ===== STUDENT APP (compact) =====
+function StudentApp({data,update,student,onLogout}){const[tab,setTab]=useState('scores');const[pinModal,setPinModal]=useState(false);const[pf,setPf]=useState({cur:'',n1:'',n2:''});const[pinErr,setPinErr]=useState('');
   if(!student)return<div style={{padding:40,textAlign:'center',color:C.red}}>ไม่พบข้อมูล</div>;
-  const subj=data.subjects[0];const cats=data.categories.filter(c=>c.subjectId===subj?.id);
-  const mx=cats.reduce((s,c)=>s+getCatMax(c),0);const tot=cats.reduce((s,c)=>s+getCatScore(student.id,c,data.scores,data.term,data.year),0);
-  const hasAny=cats.some(c=>hasCatScore(student.id,c,data.scores,data.term,data.year));
-  const attRate=calcAttRate(student.id,data.attendance);const morningRate=calcAttRate(student.id,data.attendance,'morning');
-  const grade=hasAny&&subj?getSubjectGrade(student.id,subj,data.categories,data.scores,data.term,data.year,attRate,data.conduct.minAttPct):null;
-  const conduct=calcConduct(student.id,data.attendance,data.conduct);
+  const subj=data.subjects[0];const cats=data.categories.filter(c=>c.subjectId===subj?.id);const mx=cats.reduce((s,c)=>s+getCatMax(c),0);const tot=cats.reduce((s,c)=>s+getCatScore(student.id,c,data.scores,data.term,data.year),0);
+  const hasAny=cats.some(c=>hasCatScore(student.id,c,data.scores,data.term,data.year));const attRate=calcAttRate(student.id,data.attendance);const morningRate=calcAttRate(student.id,data.attendance,'morning');
+  const grade=hasAny&&subj?getSubjectGrade(student.id,subj,data.categories,data.scores,data.term,data.year,attRate,data.conduct.minAttPct):null;const conduct=calcConduct(student.id,data.attendance,data.conduct);
   const myAtt=data.attendance.filter(a=>a.studentId===student.id).sort((a,b)=>b.date.localeCompare(a.date));
-  const changePin=()=>{if(pf.cur!==student.pin)return setPinErr('PIN ไม่ถูก');if(!/^\d{4}$/.test(pf.n1))return setPinErr('ต้อง 4 หลัก');if(pf.n1!==pf.n2)return setPinErr('ไม่ตรงกัน');
-    update(prev=>({...prev,students:prev.students.map(s=>s.id===student.id?{...s,pin:pf.n1}:s)}));setPinModal(false);setPf({cur:'',n1:'',n2:''});};
-
+  const changePin=()=>{if(pf.cur!==student.pin)return setPinErr('PIN ไม่ถูก');if(!/^\d{4}$/.test(pf.n1))return setPinErr('ต้อง 4 หลัก');if(pf.n1!==pf.n2)return setPinErr('ไม่ตรงกัน');update(prev=>({...prev,students:prev.students.map(s=>s.id===student.id?{...s,pin:pf.n1}:s)}));setPinModal(false);setPf({cur:'',n1:'',n2:''});};
   return(<div style={{minHeight:'100vh',background:C.bg}}>
-    <div style={{background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',padding:'14px 16px'}}>
-      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-        <div><div style={{fontWeight:700,fontSize:18}}>{student.nickname||student.name}</div>
-          <div style={{fontSize:12,opacity:0.85}}>{student.id} · {student.classId} · {data.term}/{data.year}</div></div>
-        <div style={{display:'flex',gap:6}}>
-          <button onClick={()=>setPinModal(true)} style={{background:'rgba(255,255,255,0.2)',border:'none',color:'white',padding:'7px 12px',borderRadius:8,cursor:'pointer',fontSize:13,fontFamily:'inherit'}}>🔑</button>
-          <button onClick={onLogout} style={{background:'rgba(255,255,255,0.2)',border:'none',color:'white',padding:'7px 12px',borderRadius:8,cursor:'pointer',fontSize:13,fontFamily:'inherit'}}>ออก</button></div></div></div>
-    <div style={{display:'flex',background:'white',borderBottom:`1px solid ${C.border}`}}>
-      {[['scores','📊 คะแนน'],['att','✓ เข้าเรียน']].map(([v,l])=><button key={v} onClick={()=>setTab(v)} style={{flex:1,padding:'13px 8px',border:'none',cursor:'pointer',background:'transparent',fontWeight:tab===v?700:400,color:tab===v?C.red:C.muted,borderBottom:`2.5px solid ${tab===v?C.red:'transparent'}`,fontSize:14,fontFamily:'inherit'}}>{l}</button>)}</div>
+    <div style={{background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',padding:'14px 16px'}}><div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontWeight:700,fontSize:18}}>{student.nickname||student.name}</div><div style={{fontSize:12,opacity:0.85}}>{student.id} · {student.classId} · {data.term}/{data.year}</div></div><div style={{display:'flex',gap:6}}><button onClick={()=>setPinModal(true)} style={{background:'rgba(255,255,255,0.2)',border:'none',color:'white',padding:'7px 12px',borderRadius:8,cursor:'pointer',fontSize:13,fontFamily:'inherit'}}>🔑</button><button onClick={onLogout} style={{background:'rgba(255,255,255,0.2)',border:'none',color:'white',padding:'7px 12px',borderRadius:8,cursor:'pointer',fontSize:13,fontFamily:'inherit'}}>ออก</button></div></div></div>
+    <div style={{display:'flex',background:'white',borderBottom:`1px solid ${C.border}`}}>{[['scores','📊 คะแนน'],['att','✓ เข้าเรียน']].map(([v,l])=><button key={v} onClick={()=>setTab(v)} style={{flex:1,padding:'13px 8px',border:'none',cursor:'pointer',background:'transparent',fontWeight:tab===v?700:400,color:tab===v?C.red:C.muted,borderBottom:`2.5px solid ${tab===v?C.red:'transparent'}`,fontSize:14,fontFamily:'inherit'}}>{l}</button>)}</div>
     <div style={{padding:16}}>
-      {tab==='scores'&&<div>
-        {hasAny&&<div style={{...sCard,background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',textAlign:'center'}}>
-          <div style={{fontSize:13,opacity:0.8}}>คะแนนรวม · {subj?.name}</div>
-          <div style={{fontSize:52,fontWeight:700,lineHeight:1.1,margin:'6px 0'}}>{tot}</div>
-          <div style={{fontSize:15,opacity:0.85}}>จาก {mx} ({mx>0?Math.round(tot/mx*100):0}%)</div>
-          {grade&&<div style={{marginTop:10,background:'rgba(255,255,255,0.2)',display:'inline-block',padding:'5px 24px',borderRadius:24,fontSize:20,fontWeight:700}}>เกรด {grade.label}</div>}</div>}
-        {cats.map(cat=>{const cs=getCatScore(student.id,cat,data.scores,data.term,data.year);const cm=getCatMax(cat);const has=hasCatScore(student.id,cat,data.scores,data.term,data.year);
-          return(<div key={cat.id} style={{...sCard,marginBottom:8}}>
-            <div style={{display:'flex',justifyContent:'space-between',marginBottom:has?8:0}}>
-              <span style={{fontWeight:600,fontSize:15}}>{cat.name}</span><span style={{fontSize:16,fontWeight:700}}>{has?`${cs}/${cm}`:'-'}</span></div>
-            {has&&cm>0&&<div style={{height:7,borderRadius:4,background:'#f3f4f6',overflow:'hidden'}}><div style={{height:'100%',width:`${(cs/cm)*100}%`,background:gradeColor(getGrade(cs,cm)),borderRadius:4}}/></div>}
-            {cat.subs?.length>0&&<div style={{marginTop:6,paddingTop:6,borderTop:`1px solid ${C.border}`}}>
-              {cat.subs.map(sub=>{const sr=data.scores.find(x=>x.studentId===student.id&&x.categoryId===cat.id&&x.subId===sub.id&&x.term===data.term&&x.year===data.year);
-                return<div key={sub.id} style={{display:'flex',justifyContent:'space-between',fontSize:13,padding:'3px 0'}}>
-                  <span style={{color:C.muted}}>{sub.name}{sub.date?` · ${fmtDate(sub.date)}`:''}</span><span style={{fontWeight:600}}>{sr?`${sr.score}/${sub.max}`:'-'}</span></div>;})}</div>}
-          </div>);})}
+      {tab==='scores'&&<div>{hasAny&&<div style={{...sCard,background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',textAlign:'center'}}><div style={{fontSize:13,opacity:0.8}}>คะแนนรวม · {subj?.name}</div><div style={{fontSize:52,fontWeight:700,lineHeight:1.1,margin:'6px 0'}}>{tot}</div><div style={{fontSize:15,opacity:0.85}}>จาก {mx} ({mx>0?Math.round(tot/mx*100):0}%)</div>{grade&&<div style={{marginTop:10,background:'rgba(255,255,255,0.2)',display:'inline-block',padding:'5px 24px',borderRadius:24,fontSize:20,fontWeight:700}}>เกรด {grade.label}</div>}</div>}
+        {cats.map(cat=>{const cs=getCatScore(student.id,cat,data.scores,data.term,data.year);const cm=getCatMax(cat);const has=hasCatScore(student.id,cat,data.scores,data.term,data.year);return(<div key={cat.id} style={{...sCard,marginBottom:8}}><div style={{display:'flex',justifyContent:'space-between',marginBottom:has?8:0}}><span style={{fontWeight:600,fontSize:15}}>{cat.name}</span><span style={{fontSize:16,fontWeight:700}}>{has?`${cs}/${cm}`:'-'}</span></div>{has&&cm>0&&<div style={{height:7,borderRadius:4,background:'#f3f4f6',overflow:'hidden'}}><div style={{height:'100%',width:`${(cs/cm)*100}%`,background:gradeColor(getGrade(cs,cm)),borderRadius:4}}/></div>}
+            {cat.subs?.length>0&&<div style={{marginTop:6,paddingTop:6,borderTop:`1px solid ${C.border}`}}>{cat.subs.map(sub=>{const sr=data.scores.find(x=>x.studentId===student.id&&x.categoryId===cat.id&&x.subId===sub.id&&x.term===data.term&&x.year===data.year);return<div key={sub.id} style={{display:'flex',justifyContent:'space-between',fontSize:13,padding:'3px 0'}}><span style={{color:C.muted}}>{sub.name}</span><span style={{fontWeight:600}}>{sr?`${sr.score}/${sub.max}`:'-'}</span></div>;})}</div>}</div>);})}
       </div>}
       {tab==='att'&&<div>
         <div style={{...sCard,background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',textAlign:'center',marginBottom:12}}>
-          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}>
-            <div style={{background:'rgba(255,255,255,0.15)',borderRadius:8,padding:10}}><div style={{fontSize:12,opacity:0.85}}>🌅 เข้าแถว</div><div style={{fontSize:28,fontWeight:700}}>{morningRate??'-'}%</div></div>
-            <div style={{background:'rgba(255,255,255,0.15)',borderRadius:8,padding:10}}><div style={{fontSize:12,opacity:0.85}}>📚 คาบ</div><div style={{fontSize:28,fontWeight:700}}>{attRate??'-'}%</div></div></div>
+          <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:8}}><div style={{background:'rgba(255,255,255,0.15)',borderRadius:8,padding:10}}><div style={{fontSize:12,opacity:0.85}}>🌅 เข้าแถว</div><div style={{fontSize:28,fontWeight:700}}>{morningRate??'-'}%</div></div><div style={{background:'rgba(255,255,255,0.15)',borderRadius:8,padding:10}}><div style={{fontSize:12,opacity:0.85}}>📚 คาบ</div><div style={{fontSize:28,fontWeight:700}}>{attRate??'-'}%</div></div></div>
           <div style={{fontSize:13}}>จิตพิสัย: <b>{conduct.score>0?'+':''}{conduct.score}</b></div>
-          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:5,marginTop:8}}>
-            {S_ORDER.map(k=><div key={k} style={{background:'rgba(255,255,255,0.15)',borderRadius:6,padding:'6px 4px'}}>
-              <div style={{fontSize:16,fontWeight:700}}>{conduct.counts[k]}</div><div style={{fontSize:11}}>{STATUS[k].label}</div></div>)}</div></div>
-        {myAtt.slice(0,60).map((a,i)=>{const subj2=data.subjects.find(x=>x.id===a.subjectId);return(<div key={i} style={{...sCard,marginBottom:5,padding:'10px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}>
-          <div><div style={{fontSize:14,fontWeight:500}}>{fmtDate(a.date)}</div>
-            <div style={{fontSize:12,color:C.muted}}>{a.type==='morning'?'🌅 เข้าแถว':`📚 ${subj2?.name||'คาบ'}`}{a.note?` · ${a.note}`:''}</div></div>
-          <span style={{background:STATUS[a.status]?.bg||'#999',color:'white',fontSize:13,padding:'4px 12px',borderRadius:20,fontWeight:600}}>
-            {STATUS[a.status]?.label}{STATUS[a.status]?.custom&&a.customScore!==undefined?` (${a.customScore>0?'+':''}${a.customScore})`:''}</span></div>);})}
+          <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:5,marginTop:8}}>{S_ORDER.map(k=><div key={k} style={{background:'rgba(255,255,255,0.15)',borderRadius:6,padding:'6px 4px'}}><div style={{fontSize:16,fontWeight:700}}>{conduct.counts[k]}</div><div style={{fontSize:11}}>{STATUS[k].label}</div></div>)}</div></div>
+        {myAtt.slice(0,60).map((a,i)=>{const subj2=data.subjects.find(x=>x.id===a.subjectId);return(<div key={i} style={{...sCard,marginBottom:5,padding:'10px 14px',display:'flex',justifyContent:'space-between',alignItems:'center'}}><div><div style={{fontSize:14,fontWeight:500}}>{fmtDate(a.date)}</div><div style={{fontSize:12,color:C.muted}}>{a.type==='morning'?'🌅 เข้าแถว':`📚 ${subj2?.name||'คาบ'}${a.period?' คาบ'+a.period:''}`}</div></div><span style={{background:STATUS[a.status]?.bg||'#999',color:'white',fontSize:13,padding:'4px 12px',borderRadius:20,fontWeight:600}}>{STATUS[a.status]?.label}{STATUS[a.status]?.custom&&a.customScore!==undefined?` (${a.customScore>0?'+':''}${a.customScore})`:''}</span></div>);})}
       </div>}</div>
-    <Sheet open={pinModal} title="🔑 เปลี่ยน PIN" onClose={()=>{setPinModal(false);setPinErr('');}}>
-      <input type="password" placeholder="PIN ปัจจุบัน" value={pf.cur} onChange={e=>setPf(p=>({...p,cur:e.target.value}))} style={{...sInp,marginBottom:8}} maxLength={4}/>
-      <input type="password" placeholder="PIN ใหม่" value={pf.n1} onChange={e=>setPf(p=>({...p,n1:e.target.value.replace(/\D/g,'').slice(0,4)}))} style={{...sInp,marginBottom:8}} maxLength={4}/>
-      <input type="password" placeholder="ยืนยัน" value={pf.n2} onChange={e=>setPf(p=>({...p,n2:e.target.value.replace(/\D/g,'').slice(0,4)}))} style={{...sInp,marginBottom:12}} maxLength={4}/>
-      {pinErr&&<div style={{color:C.red,fontSize:13,marginBottom:10,padding:'6px 10px',background:'#fff0f0',borderRadius:6}}>{pinErr}</div>}
-      <div style={{display:'flex',gap:8}}><button onClick={()=>{setPinModal(false);setPinErr('');}} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={changePin} style={{...sBtn(true),flex:1}}>บันทึก</button></div></Sheet>
-  </div>);}
+    <Sheet open={pinModal} title="🔑 เปลี่ยน PIN" onClose={()=>{setPinModal(false);setPinErr('');}}><input type="password" placeholder="PIN ปัจจุบัน" value={pf.cur} onChange={e=>setPf(p=>({...p,cur:e.target.value}))} style={{...sInp,marginBottom:8}} maxLength={4}/><input type="password" placeholder="PIN ใหม่" value={pf.n1} onChange={e=>setPf(p=>({...p,n1:e.target.value.replace(/\D/g,'').slice(0,4)}))} style={{...sInp,marginBottom:8}} maxLength={4}/><input type="password" placeholder="ยืนยัน" value={pf.n2} onChange={e=>setPf(p=>({...p,n2:e.target.value.replace(/\D/g,'').slice(0,4)}))} style={{...sInp,marginBottom:12}} maxLength={4}/>{pinErr&&<div style={{color:C.red,fontSize:13,marginBottom:10,padding:'6px 10px',background:'#fff0f0',borderRadius:6}}>{pinErr}</div>}<div style={{display:'flex',gap:8}}><button onClick={()=>{setPinModal(false);setPinErr('');}} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={changePin} style={{...sBtn(true),flex:1}}>บันทึก</button></div></Sheet></div>);}
 
 // ===== TEACHER SHELL =====
-function TeacherApp({data,update,onLogout}){
-  const[page,setPage]=useState('home');const[drawerOpen,setDrawerOpen]=useState(false);const[fabOpen,setFabOpen]=useState(false);
-  const[attInit,setAttInit]=useState(null);const[toastMsg,setToastMsg]=useState({msg:'',type:'info'});
-  const toast=useCallback((msg,type='info')=>setToastMsg({msg,type}),[]);
-  const openAtt=(type,classId)=>{setAttInit({type,classId});setPage('att');};
-  useEffect(()=>{if(page!=='att')setAttInit(null);},[page]);
-  const pageObj=NAV.find(n=>n.id===page);
-
-  return(<div style={{minHeight:'100vh',background:C.bg}}>
-    <TopBar onMenu={()=>setDrawerOpen(true)} onLogout={onLogout} label={pageObj?`${pageObj.icon} ${pageObj.label}`:''}/>
-    <Drawer open={drawerOpen} onClose={()=>setDrawerOpen(false)} current={page} onNav={setPage} data={data}/>
+function TeacherApp({data,update,onLogout}){const[page,setPage]=useState('home');const[drawerOpen,setDrawerOpen]=useState(false);const[fabOpen,setFabOpen]=useState(false);const[attInit,setAttInit]=useState(null);const[toastMsg,setToastMsg]=useState({msg:'',type:'info'});
+  const toast=useCallback((msg,type='info')=>setToastMsg({msg,type}),[]);const openAtt=(type,classId)=>{setAttInit({type,classId});setPage('att');};useEffect(()=>{if(page!=='att')setAttInit(null);},[page]);const pageObj=NAV.find(n=>n.id===page);
+  return(<div style={{minHeight:'100vh',background:C.bg}}><TopBar onMenu={()=>setDrawerOpen(true)} onLogout={onLogout} label={pageObj?`${pageObj.icon} ${pageObj.label}`:''}/><Drawer open={drawerOpen} onClose={()=>setDrawerOpen(false)} current={page} onNav={setPage} data={data}/>
     {page==='home'&&<Dashboard data={data} setPage={setPage} openAtt={openAtt}/>}
     {page==='att'&&<AttendancePage data={data} update={update} initType={attInit?.type} initClass={attInit?.classId} toast={toast}/>}
     {page==='score'&&<ScoresPage data={data} update={update} toast={toast}/>}
     {page==='stu'&&<StudentsPage data={data} update={update} toast={toast}/>}
     {page==='stat'&&<StatsPage data={data}/>}
+    {page==='io'&&<IOPage data={data} update={update} toast={toast}/>}
     {page==='set'&&<SettingsPage data={data} update={update} toast={toast}/>}
-
     <button onClick={()=>setFabOpen(true)} style={{position:'fixed',bottom:24,right:20,width:58,height:58,borderRadius:30,background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',border:'none',fontSize:28,fontWeight:300,cursor:'pointer',boxShadow:'0 6px 20px rgba(192,57,43,0.45)',zIndex:40,display:'flex',alignItems:'center',justifyContent:'center'}}>+</button>
-
-    <Sheet open={fabOpen} title="➕ เพิ่มรายการ" onClose={()=>setFabOpen(false)}>
-      <div style={{display:'flex',flexDirection:'column',gap:8}}>
-        <button onClick={()=>{setFabOpen(false);openAtt('morning',data.homeroom);}} style={{padding:'14px 16px',background:'linear-gradient(135deg,#0891b2,#0e7490)',color:'white',border:'none',borderRadius:12,cursor:'pointer',textAlign:'left',fontFamily:'inherit'}}>
-          <div style={{fontWeight:700,fontSize:15}}>🌅 เช็คชื่อเข้าแถว</div><div style={{fontSize:12,opacity:0.85}}>{data.homeroom}</div></button>
-        <button onClick={()=>{setFabOpen(false);openAtt('class');}} style={{padding:'14px 16px',background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',border:'none',borderRadius:12,cursor:'pointer',textAlign:'left',fontFamily:'inherit'}}>
-          <div style={{fontWeight:700,fontSize:15}}>📚 เช็คชื่อคาบเรียน</div></button>
-        <button onClick={()=>{setFabOpen(false);setPage('score');}} style={{padding:'14px 16px',background:'linear-gradient(135deg,#d97706,#b45309)',color:'white',border:'none',borderRadius:12,cursor:'pointer',textAlign:'left',fontFamily:'inherit'}}>
-          <div style={{fontWeight:700,fontSize:15}}>📊 บันทึกคะแนน</div></button>
-        <button onClick={()=>{setFabOpen(false);setPage('stu');}} style={{padding:'14px 16px',background:C.light,color:C.text,border:`1.5px solid ${C.border}`,borderRadius:12,cursor:'pointer',textAlign:'left',fontFamily:'inherit'}}>
-          <div style={{fontWeight:700,fontSize:15}}>👤 เพิ่มนักเรียน</div></button></div></Sheet>
-    <Toast msg={toastMsg.msg} type={toastMsg.type} onClose={()=>setToastMsg({msg:'',type:'info'})}/>
-  </div>);}
+    <Sheet open={fabOpen} title="➕ เพิ่มรายการ" onClose={()=>setFabOpen(false)}><div style={{display:'flex',flexDirection:'column',gap:8}}>
+      <button onClick={()=>{setFabOpen(false);openAtt('morning',data.homeroom);}} style={{padding:'14px 16px',background:'linear-gradient(135deg,#0891b2,#0e7490)',color:'white',border:'none',borderRadius:12,cursor:'pointer',textAlign:'left',fontFamily:'inherit'}}><div style={{fontWeight:700,fontSize:15}}>🌅 เช็คชื่อเข้าแถว</div><div style={{fontSize:12,opacity:0.85}}>{data.homeroom}</div></button>
+      <button onClick={()=>{setFabOpen(false);openAtt('class');}} style={{padding:'14px 16px',background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',border:'none',borderRadius:12,cursor:'pointer',textAlign:'left',fontFamily:'inherit'}}><div style={{fontWeight:700,fontSize:15}}>📚 เช็คชื่อคาบเรียน</div><div style={{fontSize:12,opacity:0.85}}>เลือกวิชา + คาบ</div></button>
+      <button onClick={()=>{setFabOpen(false);setPage('score');}} style={{padding:'14px 16px',background:'linear-gradient(135deg,#d97706,#b45309)',color:'white',border:'none',borderRadius:12,cursor:'pointer',textAlign:'left',fontFamily:'inherit'}}><div style={{fontWeight:700,fontSize:15}}>📊 บันทึกคะแนน</div></button>
+      <button onClick={()=>{setFabOpen(false);setPage('stu');}} style={{padding:'14px 16px',background:C.light,color:C.text,border:`1.5px solid ${C.border}`,borderRadius:12,cursor:'pointer',textAlign:'left',fontFamily:'inherit'}}><div style={{fontWeight:700,fontSize:15}}>👤 เพิ่มนักเรียน</div></button></div></Sheet>
+    <Toast msg={toastMsg.msg} type={toastMsg.type} onClose={()=>setToastMsg({msg:'',type:'info'})}/></div>);}
 
 // ===== MAIN =====
-export default function App(){
-  const { data, loading, update } = useFirestore();
-  const [user, setUser] = useState(null);
-
-  useEffect(() => {
-    const l = document.createElement('link');
-    l.rel = 'stylesheet';
-    l.href = 'https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap';
-    document.head.appendChild(l);
-  }, []);
-
-  if (loading) return (
-    <div style={{display:'flex',flexDirection:'column',alignItems:'center',
-      justifyContent:'center',height:'100vh',background:'#FFF9F0',
-      fontFamily:'Sarabun,sans-serif'}}>
-      <div style={{fontSize:64,color:'#C0392B'}}>中</div>
-      <div style={{color:'#9B7B5C',marginTop:12}}>กำลังโหลด...</div>
-    </div>
-  );
-
-  if (!data) return null;
-  if (!user) return <LoginScreen data={data} onLogin={setUser}/>;
-  if (user.role === 'teacher')
-    return <TeacherApp data={data} update={update} onLogout={() => setUser(null)}/>;
-  return <StudentApp data={data} update={update}
-    student={data.students.find(s => s.id === user.id)}
-    onLogout={() => setUser(null)}/>;
-}
+export default function App(){const[data,setData]=useState(null);const[loading,setLoading]=useState(true);const[user,setUser]=useState(null);
+  useEffect(()=>{const l=document.createElement('link');l.rel='stylesheet';l.href='https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap';document.head.appendChild(l);document.body.style.fontFamily='Sarabun, sans-serif';
+    loadData().then(d=>{if(d){d.classes=d.classes||[...DEFAULT_CLASSES];d.homeroom=d.homeroom||'ม.5/2';d.conduct=d.conduct||CONDUCT_DEF;d.subjects=d.subjects||initData().subjects;
+      d.students=(d.students||[]).map(s=>({...s,nickname:s.nickname||'',pin:/^\d{4}$/.test(s.pin)?s.pin:randomPin()}));d.categories=(d.categories||[]).map(c=>({...c,subs:c.subs||[],subjectId:c.subjectId||d.subjects?.[0]?.id||''}));}
+      setData(d||initData());setLoading(false);}).catch(()=>{setData(initData());setLoading(false);});
+  },[]);
+  const update=useCallback(fn=>{setData(prev=>{const next=fn(prev);saveData(next);return next;});},[]);
+  if(loading)return<div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100vh',background:C.bg}}><div style={{fontSize:64,color:C.red}}>中</div><div style={{color:C.muted,marginTop:12}}>กำลังโหลด...</div></div>;
+  if(!data)return null;if(!user)return<LoginScreen data={data} onLogin={setUser}/>;
+  if(user.role==='teacher')return<TeacherApp data={data} update={update} onLogout={()=>setUser(null)}/>;
+  return<StudentApp data={data} update={update} student={data.students.find(s=>s.id===user.id)} onLogout={()=>setUser(null)}/>;}
