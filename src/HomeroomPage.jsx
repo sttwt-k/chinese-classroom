@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import React, { useState, useRef } from "react";
 
 // ===== CONSTANTS =====
 const C = {red:'#C0392B',dark:'#96281B',bg:'#FFF9F0',card:'#fff',border:'#F0E0CC',text:'#2C1810',muted:'#9B7B5C',light:'#FAF0E6',blue:'#0891b2'};
