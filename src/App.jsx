@@ -862,6 +862,7 @@ function Dashboard({data,setPage,openAtt}){const today=todayStr();const morningA
 function AttendancePage({data,update,initType,initClass,toast}){
   const[tab,setTab]=useState(initType||'morning');const[date,setDate]=useState(todayStr());const[cls,setCls]=useState(initClass||(tab==='morning'?data.homeroom:''));const[subjId,setSubjId]=useState(data.subjects[0]?.id||'');const[period,setPeriod]=useState(1);const[scoreModal,setScoreModal]=useState(null);
   const[sheetOpen,setSheetOpen]=useState(null);
+  const[ttForm,setTtForm]=useState({subjId:'',classId:''});
   
   useEffect(()=>{if(tab==='morning')setCls(data.homeroom);},[tab,data.homeroom]);
   const classesHave=sortClasses(data.classes.filter(c=>data.students.some(s=>s.classId===c)));const students=data.students.filter(s=>s.classId===cls).sort((a,b)=>(a.number||999)-(b.number||999)||(a.name||'').localeCompare(b.name||'','th'));
@@ -902,6 +903,7 @@ function AttendancePage({data,update,initType,initClass,toast}){
        setDate(targetDate.toISOString().split('T')[0]);
        setTtView(false);
     } else {
+       setTtForm({ subjId: block?.subjId || data.subjects[0]?.id || '', classId: block?.classId || '' });
        setSheetOpen({type:'tt_edit', day:d, period:p});
     }
   };
@@ -1003,21 +1005,9 @@ function AttendancePage({data,update,initType,initClass,toast}){
       </div>
     </Sheet>
 
-    <Sheet open={sheetOpen?.type==='tt_edit'} title={`แก้ไขวิชา: ${sheetOpen?.day} คาบ ${sheetOpen?.period?.id}`} onClose={()=>setSheetOpen(null)}>
-       {sheetOpen && (() => {
-           const key = `${sheetOpen.day}-${sheetOpen.period.id}`;
-           const block = data.timetable?.[key] || {};
-           const [ttForm, setTtForm] = useState({subjId: block.subjId||data.subjects[0]?.id||'', classId: block.classId||''});
-           const saveTt = () => {
-              if(!ttForm.subjId || !ttForm.classId) return toast('เลือกข้อมูลให้ครบ','error');
-              update(p => ({...p, timetable: {...(p.timetable||{}), [key]: ttForm}}));
-              setSheetOpen(null); toast('บันทึกคาบเรียนแล้ว','success');
-           };
-           const delTt = () => {
-              update(p => { const newTt = {...(p.timetable||{})}; delete newTt[key]; return {...p, timetable: newTt}; });
-              setSheetOpen(null); toast('ลบวิชาในคาบนี้แล้ว','success');
-           };
-           return <div>
+    <Sheet open={sheetOpen?.type==='tt_edit'} title={`แก้ไขวิชา: ${sheetOpen?.day||''} คาบ ${sheetOpen?.period?.id||''}`} onClose={()=>setSheetOpen(null)}>
+       {sheetOpen?.type === 'tt_edit' && (
+           <div>
                <div style={{marginBottom:16}}>
                    <div style={{fontSize:13,color:C.muted,marginBottom:6}}>รายวิชา</div>
                    <select value={ttForm.subjId} onChange={e=>setTtForm(p=>({...p,subjId:e.target.value}))} style={{...sInp,fontFamily:'inherit'}}>{data.subjects.map(s=><option key={s.id} value={s.id}>{s.code} {s.name}</option>)}</select>
@@ -1025,14 +1015,23 @@ function AttendancePage({data,update,initType,initClass,toast}){
                <div style={{marginBottom:24}}>
                    <div style={{fontSize:13,color:C.muted,marginBottom:6}}>ห้องเรียน <span style={{color:C.red}}>*พิมเลขห้อง 301 = ม.3/1</span></div>
                    <input value={ttForm.classId} onChange={e=>setTtForm(p=>({...p,classId:e.target.value}))} style={sInp} placeholder="เช่น ม.3/1 หรือ 301" list="cls-list"/>
-                   <datalist id="cls-list">{sortedClasses(data.classes).map(c=><option key={c} value={c}/>)}</datalist>
+                   <datalist id="cls-list">{sortClasses(data.classes).map(c=><option key={c} value={c}/>)}</datalist>
                </div>
                <div style={{display:'flex',gap:12}}>
-                  <button onClick={delTt} style={{...sBtn(false),flex:1,color:'#dc2626',border:'1px solid #fecaca',background:'#fee2e2'}}>ลบวิชา</button>
-                  <button onClick={saveTt} style={{...sBtn(true),flex:2}}>💾 บันทึกตารางสอน</button>
+                  <button onClick={() => {
+                      const key = `${sheetOpen.day}-${sheetOpen.period.id}`;
+                      update(p => { const newTt = {...(p.timetable||{})}; delete newTt[key]; return {...p, timetable: newTt}; });
+                      setSheetOpen(null); toast('ลบวิชาในคาบนี้แล้ว','success');
+                  }} style={{...sBtn(false),flex:1,color:'#dc2626',border:'1px solid #fecaca',background:'#fee2e2'}}>ลบวิชา</button>
+                  <button onClick={() => {
+                      if(!ttForm.subjId || !ttForm.classId) return toast('เลือกข้อมูลให้ครบ','error');
+                      const key = `${sheetOpen.day}-${sheetOpen.period.id}`;
+                      update(p => ({...p, timetable: {...(p.timetable||{}), [key]: ttForm}}));
+                      setSheetOpen(null); toast('บันทึกคาบเรียนแล้ว','success');
+                  }} style={{...sBtn(true),flex:2}}>💾 บันทึกตารางสอน</button>
                </div>
-           </div>;
-       })()}
+           </div>
+       )}
     </Sheet>
 
     <Sheet open={!!scoreModal} title={scoreModal?`📝 ${STATUS[scoreModal.status]?.label} — คะแนนจิตพิสัย`:''} onClose={()=>setScoreModal(null)}>{scoreModal&&<div><div style={{fontSize:13,color:C.muted,marginBottom:8}}>+เท่ากับมา · -เท่ากับขาด · 0เท่ากับสาย</div><input type="number" step="0.5" value={scoreModal.customScore} onChange={e=>setScoreModal(p=>({...p,customScore:parseFloat(e.target.value)||0}))} style={{...sInp,marginBottom:16,fontSize:24,fontWeight:700,textAlign:'center',padding:16}} autoFocus/><div style={{display:'flex',gap:8,marginBottom:20}}>{[-1,-0.5,0,0.5,1].map(n=><button key={n} onClick={()=>setScoreModal(p=>({...p,customScore:n}))} style={{flex:1,padding:12,borderRadius:10,border:`2px solid ${scoreModal.customScore===n?C.red:C.border}`,background:scoreModal.customScore===n?C.red:'white',color:scoreModal.customScore===n?'white':C.text,cursor:'pointer',fontFamily:'inherit',fontSize:15,fontWeight:700}}>{n>0?'+':''}{n}</button>)}</div><input value={scoreModal.note||''} onChange={e=>setScoreModal(p=>({...p,note:e.target.value}))} style={{...sInp,marginBottom:20}} placeholder="หมายเหตุ (ถ้ามี)"/><div style={{display:'flex',gap:12}}><button onClick={()=>setScoreModal(null)} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={()=>{saveStatus(scoreModal.studentId,scoreModal.status,scoreModal.customScore,scoreModal.note);setScoreModal(null);}} style={{...sBtn(true),flex:1}}>บันทึก</button></div></div>}</Sheet></div>);}
