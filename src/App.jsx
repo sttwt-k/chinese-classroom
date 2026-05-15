@@ -12,7 +12,7 @@ const CREDIT_OPTIONS=[0.5,1.0,1.5,2.0,2.5];
 const creditToHours=c=>c*2;
 const CONDUCT_DEF={presentScore:1,absentScore:-1,lateGroup:3,latePenalty:-1,minAttPct:20};
 
-// ปรับโทนสี ขาว-แดง ทันสมัย
+// ปรับโทนสี
 const C={red:'#E53935',dark:'#B71C1C',bg:'#F8FAFC',card:'#FFFFFF',border:'#E2E8F0',text:'#1E293B',muted:'#64748B',light:'#FEF2F2',blue:'#0284C7'};
 const NAV=[{id:'home',icon:'🏠',label:'หน้าหลัก'},{id:'att',icon:'✓',label:'เช็คชื่อ'},{id:'score',icon:'📊',label:'คะแนน'},{id:'stu',icon:'👥',label:'นักเรียน'},{id:'stat',icon:'📈',label:'สถิติ'},{id:'homeroom',icon:'🏫',label:'ประจำชั้น'},{id:'io',icon:'📥',label:'นำเข้า/ส่งออก'},{id:'set',icon:'⚙️',label:'ตั้งค่า'}];
 
@@ -131,8 +131,8 @@ try {
   console.warn("Firebase Init Error:", e);
 }
 
-const DOC_ID = "main_data";
-const COLLECTION = "app_data";
+const DEFAULT_DOC_ID = "main";
+const COLLECTION = "classrooms";
 
 const isBase64 = s => typeof s === 'string' && s.startsWith('data:image');
 const uploadImg = async (base64, path) => {
@@ -182,19 +182,41 @@ const initData = () => ({
   scores: [],
   profiles: {},
   savings: {},
-  timetable: {}, // เพิ่ม state สำหรับเก็บข้อมูลตารางสอน
+  timetable: {},
   conduct: { presentScore: 1, absentScore: -1, lateGroup: 3, latePenalty: -1, minAttPct: 20 }
 });
 
 function useFirestore() {
+  const [sysConfig, setSysConfig] = useState(null);
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
 
+  // 1. โหลดการตั้งค่าระบบหลัก (เพื่อดูว่าปัจจุบันใช้ Database เทอมไหนอยู่)
   useEffect(() => {
     if (!db) { setLoading(false); return; }
-    const docRef = doc(db, COLLECTION, DOC_ID);
+    const configRef = doc(db, COLLECTION, "_system_config");
+    const unsubscribe = onSnapshot(configRef, (snap) => {
+      if (snap.exists()) {
+        setSysConfig(snap.data());
+      } else {
+        // ค่าเริ่มต้น หากยังไม่เคยตั้งค่า
+        const initConf = { activeDocId: DEFAULT_DOC_ID, history: [{id: DEFAULT_DOC_ID, label: "ภาคเรียนปัจจุบัน"}] };
+        setDoc(configRef, initConf).catch(err => console.error(err));
+        setSysConfig(initConf);
+      }
+    }, (error) => {
+      console.error("Config fetch error:", error);
+    });
+    return () => unsubscribe();
+  }, []);
 
-    const unsubscribe = onSnapshot(docRef, 
+  // 2. โหลดข้อมูลของเทอมปัจจุบัน
+  useEffect(() => {
+    if (!db || !sysConfig?.activeDocId) return;
+    setLoading(true);
+    const docRef = doc(db, COLLECTION, sysConfig.activeDocId);
+
+    const unsubscribe = onSnapshot(docRef,
       (docSnap) => {
         if (docSnap.exists()) {
           const fetchedData = docSnap.data();
@@ -215,9 +237,8 @@ function useFirestore() {
         setLoading(false);
       }
     );
-
     return () => unsubscribe();
-  }, []);
+  }, [sysConfig?.activeDocId]);
 
   const update = useCallback((fn) => {
     setData((prev) => {
@@ -229,8 +250,8 @@ function useFirestore() {
         if (toSave.profiles) {
           toSave.profiles = await processProfiles(toSave.profiles);
         }
-        if (db) {
-          const docRef = doc(db, COLLECTION, DOC_ID);
+        if (db && sysConfig?.activeDocId) {
+          const docRef = doc(db, COLLECTION, sysConfig.activeDocId);
           await setDoc(docRef, toSave);
         }
       };
@@ -241,9 +262,41 @@ function useFirestore() {
       
       return next;
     });
-  }, []);
+  }, [sysConfig?.activeDocId]);
 
-  return { data, loading, update };
+  // ฟังก์ชันสำหรับการจัดการฐานข้อมูลรายเทอม
+  const systemActions = {
+    sysConfig,
+    switchTerm: async (docId) => {
+      if(!db || !sysConfig) return;
+      await setDoc(doc(db, COLLECTION, "_system_config"), { ...sysConfig, activeDocId: docId });
+    },
+    createNewTerm: async (term, year, opts) => {
+      if(!db || !sysConfig || !data) return;
+      
+      // สร้าง ID ใหม่สำหรับเอกสารของเทอมใหม่ (ป้องกันชื่อซ้ำด้วย Date.now)
+      const newDocId = `term_${term}_${year}_${Date.now()}`; 
+      const label = `ภาคเรียน ${term}/${year}`;
+      
+      // ก๊อปปี้ข้อมูลโครงสร้างพื้นฐานเดิม (นักเรียน, วิชา, ตั้งค่า) ไปยังเอกสารใหม่
+      const newData = { ...data, term: parseInt(term), year: parseInt(year) };
+
+      // เลือกล้างข้อมูลที่ไม่ต้องการยกยอดไป
+      if(!opts.keepAtt) newData.attendance = [];
+      if(!opts.keepScore) { newData.scores = []; newData.categories = []; }
+      if(!opts.keepTt) newData.timetable = {};
+      if(!opts.keepSav) newData.savings = {};
+
+      // บันทึกเอกสารของเทอมใหม่
+      await setDoc(doc(db, COLLECTION, newDocId), newData);
+
+      // อัปเดตให้ระบบชี้มาที่เทอมใหม่ และเก็บประวัติเทอมเก่าไว้
+      const newHistory = [...(sysConfig.history||[]), { id: newDocId, label }];
+      await setDoc(doc(db, COLLECTION, "_system_config"), { activeDocId: newDocId, history: newHistory });
+    }
+  };
+
+  return { data, loading, update, systemActions };
 }
 
 // ===== SEPARATE INPUT COMPONENTS TO FIX FOCUS LOSS =====
@@ -286,7 +339,7 @@ function TopBar({onMenu,onLogout,label,appName}){
 
 function Drawer({open,onClose,current,onNav,data}){return(<><div onClick={onClose} style={{position:'fixed',inset:0,background:'rgba(0,0,0,0.5)',zIndex:200,opacity:open?1:0,pointerEvents:open?'auto':'none',transition:'opacity 0.2s',backdropFilter:'blur(2px)'}}/><div style={{position:'fixed',top:0,left:0,bottom:0,width:280,background:'white',zIndex:201,transform:open?'translateX(0)':'translateX(-100%)',transition:'transform 0.25s',boxShadow:'2px 0 24px rgba(0,0,0,0.15)',display:'flex',flexDirection:'column'}}><div style={{background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',padding:'24px 20px'}}><div style={{fontSize:44,lineHeight:1}}>中</div><div style={{fontWeight:700,fontSize:18,marginTop:8}}>{data.appName||'ห้องเรียนของคุณครูต้นฝน'}</div><div style={{fontSize:13,opacity:0.85}}>ภาคเรียน {data.term}/{data.year}</div></div><div style={{flex:1,overflowY:'auto',padding:'12px 0'}}>{NAV.map((n,i)=>(<div key={n.id}>{i===5&&<div style={{height:1,background:C.border,margin:'12px 20px'}}/>}<button onClick={()=>{onNav(n.id);onClose();}} style={{width:'100%',padding:'14px 20px',border:'none',background:current===n.id?C.light:'transparent',color:current===n.id?C.red:C.text,display:'flex',alignItems:'center',gap:16,cursor:'pointer',fontSize:16,fontWeight:current===n.id?700:500,fontFamily:'inherit',borderLeft:`4px solid ${current===n.id?C.red:'transparent'}`,transition:'all 0.2s'}}><span style={{fontSize:20,width:24,textAlign:'center'}}>{n.icon}</span><span>{n.label}</span></button></div>))}</div></div></>);}
 
-// ===== HOMEROOM COMPONENTS (Detailed Version) =====
+// ===== HOMEROOM COMPONENTS =====
 function ProfileForm({ student, profile, onSave, onBack, toast }) {
   const [form, setForm] = useState({ ...emptyProfile(), ...profile });
   const [sec, setSec] = useState(0);
@@ -1176,7 +1229,6 @@ function IOPage({data,update,toast}){
     try{
       const XLSX=await import('xlsx');
       const wb=XLSX.utils.book_new();
-      // แก้ไขปัญหาชื่อไฟล์ให้เซฟได้
       const safeSheetName = (name) => name.replace(/[\\/?*[\]:]/g, '-').substring(0, 31);
       
       if(exportSections.students){
@@ -1306,38 +1358,91 @@ function IOPage({data,update,toast}){
   </div>);}
 
 // ===== SETTINGS =====
-function SettingsPage({data,update,toast}){
+function SettingsPage({data, update, systemActions, toast}){
   const[form,setForm]=useState({appName:data.appName||'ห้องเรียนของคุณครูต้นฝน',term:data.term,year:data.year,homeroom:data.homeroom,teacherUsername:data.teacherUsername||'puntoy',password:'',presentScore:data.conduct.presentScore,absentScore:data.conduct.absentScore,lateGroup:data.conduct.lateGroup,latePenalty:data.conduct.latePenalty,minAttPct:data.conduct.minAttPct});
   const[wipeModal,setWipeModal]=useState(false);
   const[wipeOpts,setWipeOpts]=useState({students:false, attendance:false, scores:false, savings:false});
   const sortedCls=useMemo(()=>sortClasses(data.classes),[data.classes]);
 
-  const save=()=>{update(prev=>({...prev,appName:form.appName.trim()||prev.appName,term:parseInt(form.term)||prev.term,year:parseInt(form.year)||prev.year,homeroom:form.homeroom,teacherUsername:form.teacherUsername.trim()||'puntoy',password:form.password.trim()||prev.password,conduct:{presentScore:parseFloat(form.presentScore)||0,absentScore:parseFloat(form.absentScore)||0,lateGroup:parseInt(form.lateGroup)||3,latePenalty:parseFloat(form.latePenalty)||0,minAttPct:parseInt(form.minAttPct)||20}}));toast('บันทึกการตั้งค่าแล้ว','success');setForm(p=>({...p,password:''}));};
+  // ระบบจัดการเทอม
+  const [termModal, setTermModal] = useState(false);
+  const [termForm, setTermForm] = useState({ term: data.term === 1 ? 2 : 1, year: data.term === 1 ? data.year : data.year + 1 });
+  const [termOpts, setTermOpts] = useState({ keepAtt: false, keepScore: false, keepTt: false, keepSav: false });
+  const [switchId, setSwitchId] = useState(systemActions.sysConfig?.activeDocId || '');
+
+  const save=async()=>{
+    update(prev=>({...prev,appName:form.appName.trim()||prev.appName,term:parseInt(form.term)||prev.term,year:parseInt(form.year)||prev.year,homeroom:form.homeroom,teacherUsername:form.teacherUsername.trim()||'puntoy',password:form.password.trim()||prev.password,conduct:{presentScore:parseFloat(form.presentScore)||0,absentScore:parseFloat(form.absentScore)||0,lateGroup:parseInt(form.lateGroup)||3,latePenalty:parseFloat(form.latePenalty)||0,minAttPct:parseInt(form.minAttPct)||20}}));
+    
+    // อัปเดตชื่อเทอมในประวัติให้ตรงกับการตั้งค่าที่แก้
+    if(systemActions?.sysConfig) {
+       const newLabel = `ภาคเรียน ${form.term}/${form.year}`;
+       const newHistory = (systemActions.sysConfig.history || []).map(h => 
+           h.id === systemActions.sysConfig.activeDocId ? { ...h, label: newLabel } : h
+       );
+       await setDoc(doc(getFirestore(), "classrooms", "_system_config"), {
+           ...systemActions.sysConfig,
+           history: newHistory
+       });
+    }
+
+    toast('บันทึกการตั้งค่าแล้ว','success');setForm(p=>({...p,password:''}));
+  };
   
+  const handleCreateTerm = async () => {
+    await systemActions.createNewTerm(termForm.term, termForm.year, termOpts);
+    setTermModal(false);
+    toast('สร้างและสลับไปภาคเรียนใหม่สำเร็จ', 'success');
+  };
+
+  const handleSwitch = async () => {
+    if(!switchId) return;
+    await systemActions.switchTerm(switchId);
+    toast('สลับภาคเรียนแล้ว', 'success');
+  };
+
   const confirmWipe=()=>{
     update(prev => {
         const next = {...prev};
         if(wipeOpts.students) { next.students = []; next.profiles = {}; next.classes = DEFAULT_CLASSES; }
         if(wipeOpts.attendance) { next.attendance = []; }
-        if(wipeOpts.scores) { next.scores = []; next.categories = []; } // ลบเกณฑ์คะแนนด้วยเพื่อให้ตั้งใหม่เทอมหน้า
+        if(wipeOpts.scores) { next.scores = []; next.categories = []; } 
         if(wipeOpts.savings) { next.savings = {}; }
         return next;
     });
     setWipeModal(false);
-    toast('ล้างข้อมูลที่เลือกแล้ว','success');
+    toast('ล้างข้อมูลที่เลือกในเทอมนี้แล้ว','success');
   };
 
   return(<div style={{padding:'14px 14px 100px'}}><div style={{fontWeight:700,fontSize:20,marginBottom:16,color:C.text,letterSpacing:'-0.5px'}}>⚙️ ตั้งค่าระบบ</div>
+      
+      {/* ระบบจัดการเทอมแบบแยกฐานข้อมูล */}
+      <div style={{...sCard, border:`2px solid ${C.red}`}}>
+         <div style={{fontWeight:700,fontSize:16,marginBottom:12, color:C.red}}>🗄️ การจัดการฐานข้อมูล (แยกเทอม)</div>
+         <div style={{fontSize:13,color:C.muted,marginBottom:8}}>สลับไปดูข้อมูลเทอมก่อนหน้า หรือเทอมอื่นๆ ได้ที่นี่</div>
+         <div style={{display:'flex', gap:8, marginBottom:16}}>
+            <select value={switchId} onChange={e=>setSwitchId(e.target.value)} style={{...sInp, flex:1, fontFamily:'inherit'}}>
+               {(systemActions.sysConfig?.history || []).map(h => (
+                  <option key={h.id} value={h.id}>{h.label} {h.id === systemActions.sysConfig?.activeDocId ? '(เทอมปัจจุบัน)' : ''}</option>
+               ))}
+            </select>
+            <button onClick={handleSwitch} style={{...sBtn(true), background:C.blue, padding:'10px 16px', flexShrink:0}}>🔄 สลับดูข้อมูล</button>
+         </div>
+         <button onClick={()=>setTermModal(true)} style={{...sBtn(false), width:'100%', border:`2px dashed ${C.red}`, color:C.red, background:'transparent', padding:14}}>
+            ➕ ขึ้นเทอมใหม่ (สร้างฐานข้อมูลใหม่)
+         </button>
+      </div>
+
       <div style={sCard}><div style={{fontWeight:700,fontSize:15,marginBottom:12}}>🏫 ชื่อแอปพลิเคชัน</div><input value={form.appName} onChange={e=>setForm(p=>({...p,appName:e.target.value}))} style={sInp}/></div>
-      <div style={sCard}><div style={{fontWeight:700,fontSize:15,marginBottom:12}}>📅 ภาคเรียนปัจจุบัน</div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}><div><div style={{fontSize:13,color:C.muted,marginBottom:6,fontWeight:500}}>ภาคเรียน</div><select value={form.term} onChange={e=>setForm(p=>({...p,term:e.target.value}))} style={{...sInp,fontFamily:'inherit'}}><option value={1}>1</option><option value={2}>2</option></select></div><div><div style={{fontSize:13,color:C.muted,marginBottom:6,fontWeight:500}}>ปี (พ.ศ.)</div><input type="number" value={form.year} onChange={e=>setForm(p=>({...p,year:e.target.value}))} style={sInp}/></div></div><div style={{fontSize:13,color:C.muted,marginBottom:6,fontWeight:500}}>ห้องประจำชั้น</div><select value={form.homeroom} onChange={e=>setForm(p=>({...p,homeroom:e.target.value}))} style={{...sInp,fontFamily:'inherit'}}>{sortedCls.map(c=><option key={c} value={c}>{c}</option>)}</select></div>
+      <div style={sCard}><div style={{fontWeight:700,fontSize:15,marginBottom:12}}>📅 แก้ไขชื่อภาคเรียน (เฉพาะฐานข้อมูลนี้)</div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}><div><div style={{fontSize:13,color:C.muted,marginBottom:6,fontWeight:500}}>ภาคเรียน</div><select value={form.term} onChange={e=>setForm(p=>({...p,term:e.target.value}))} style={{...sInp,fontFamily:'inherit'}}><option value={1}>1</option><option value={2}>2</option></select></div><div><div style={{fontSize:13,color:C.muted,marginBottom:6,fontWeight:500}}>ปี (พ.ศ.)</div><input type="number" value={form.year} onChange={e=>setForm(p=>({...p,year:e.target.value}))} style={sInp}/></div></div><div style={{fontSize:13,color:C.muted,marginBottom:6,fontWeight:500}}>ห้องประจำชั้น</div><select value={form.homeroom} onChange={e=>setForm(p=>({...p,homeroom:e.target.value}))} style={{...sInp,fontFamily:'inherit'}}>{sortedCls.map(c=><option key={c} value={c}>{c}</option>)}</select></div>
       <div style={sCard}><div style={{fontWeight:700,fontSize:15,marginBottom:6}}>🎯 จิตพิสัย (คาบเรียน)</div><div style={{fontSize:13,color:C.muted,marginBottom:12}}>ลา/กิจกรรม: +มา · -ขาด · 0=สาย</div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:12}}><div><div style={{fontSize:13,color:C.muted,marginBottom:6,fontWeight:500}}>มา (+)</div><input type="number" step="0.5" value={form.presentScore} onChange={e=>setForm(p=>({...p,presentScore:e.target.value}))} style={sInp}/></div><div><div style={{fontSize:13,color:C.muted,marginBottom:6,fontWeight:500}}>ขาด (-)</div><input type="number" step="0.5" value={form.absentScore} onChange={e=>setForm(p=>({...p,absentScore:e.target.value}))} style={sInp}/></div></div><div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12}}><div><div style={{fontSize:13,color:C.muted,marginBottom:6,fontWeight:500}}>สาย ทุก N ครั้ง</div><input type="number" value={form.lateGroup} onChange={e=>setForm(p=>({...p,lateGroup:e.target.value}))} style={sInp}/></div><div><div style={{fontSize:13,color:C.muted,marginBottom:6,fontWeight:500}}>หักคะแนน</div><input type="number" step="0.5" value={form.latePenalty} onChange={e=>setForm(p=>({...p,latePenalty:e.target.value}))} style={sInp}/></div></div></div>
       <div style={sCard}><div style={{fontWeight:700,fontSize:15,marginBottom:12}}>🚨 มส. (เข้าเรียนต่ำกว่า %)</div><input type="number" value={form.minAttPct} onChange={e=>setForm(p=>({...p,minAttPct:e.target.value}))} style={sInp}/></div>
       <div style={sCard}><div style={{fontWeight:700,fontSize:15,marginBottom:12}}>🔐 บัญชีครูผู้สอน</div><div style={{fontSize:13,color:C.muted,marginBottom:6,fontWeight:500}}>ชื่อผู้ใช้ (Username)</div><input value={form.teacherUsername} onChange={e=>setForm(p=>({...p,teacherUsername:e.target.value}))} style={{...sInp,marginBottom:12}} placeholder="เช่น puntoy"/><div style={{fontSize:13,color:C.muted,marginBottom:6,fontWeight:500}}>รหัสผ่านใหม่ (ทิ้งว่างถ้าไม่ต้องการเปลี่ยน)</div><input type="password" value={form.password} onChange={e=>setForm(p=>({...p,password:e.target.value}))} style={sInp} placeholder="เว้นว่าง = ไม่เปลี่ยน"/></div>
       <button onClick={save} style={{...sBtn(true),width:'100%',padding:16,fontSize:18,marginBottom:16,boxShadow:'0 4px 12px rgba(229,57,53,0.3)'}}>💾 บันทึกการตั้งค่า</button>
-      <button onClick={()=>setWipeModal(true)} style={{width:'100%',padding:14,background:'#FEF2F2',color:'#DC2626',border:'1px solid #FCA5A5',borderRadius:12,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>🗑 ล้างข้อมูลขึ้นเทอมใหม่...</button>
+      <button onClick={()=>setWipeModal(true)} style={{width:'100%',padding:14,background:'#FEF2F2',color:'#DC2626',border:'1px solid #FCA5A5',borderRadius:12,fontWeight:700,cursor:'pointer',fontFamily:'inherit'}}>⚠️ ล้างข้อมูลในเทอมปัจจุบันนี้...</button>
 
-      <Sheet open={wipeModal} title="🗑 เลือกล้างข้อมูลเพื่อขึ้นเทอมใหม่" onClose={()=>setWipeModal(false)}>
-         <div style={{fontSize:14,color:C.muted,marginBottom:16}}>ข้อมูลที่ถูกลบจะไม่สามารถกู้คืนได้ กรุณาส่งออก Excel เก็บไว้ก่อนเสมอ</div>
+      {/* Modal เลือกล้างข้อมูล */}
+      <Sheet open={wipeModal} title="⚠️ ล้างข้อมูลเฉพาะเทอมนี้" onClose={()=>setWipeModal(false)}>
+         <div style={{fontSize:14,color:C.muted,marginBottom:16}}>ข้อมูลที่ถูกลบในเทอมนี้จะไม่สามารถกู้คืนได้ (ควรใช้กรณีที่กรอกข้อมูลผิดพลาดทั้งหมด)</div>
          <div style={{display:'flex',flexDirection:'column',gap:12,marginBottom:24}}>
             {[
                {k:'students', l:'รายชื่อนักเรียนทั้งหมด (รวมประวัติ รูปถ่าย และห้องเรียน)'},
@@ -1352,6 +1457,31 @@ function SettingsPage({data,update,toast}){
          <div style={{display:'flex',gap:12}}>
             <button onClick={()=>setWipeModal(false)} style={{...sBtn(false),flex:1}}>ยกเลิก</button>
             <button onClick={confirmWipe} disabled={!Object.values(wipeOpts).some(Boolean)} style={{...sBtn(true),flex:1,opacity:Object.values(wipeOpts).some(Boolean)?1:0.5}}>ยืนยันการลบ</button>
+         </div>
+      </Sheet>
+
+      {/* Modal สร้างเทอมใหม่ */}
+      <Sheet open={termModal} title="➕ สร้างฐานข้อมูลเทอมใหม่" onClose={()=>setTermModal(false)}>
+         <div style={{fontSize:14,color:C.text,marginBottom:16, lineHeight:1.5}}>
+            ระบบจะสร้างฐานข้อมูลใหม่ขึ้นมา และคัดลอก <b>"รายชื่อนักเรียน ประวัตินักเรียน และรายวิชาทั้งหมด"</b> ให้อัตโนมัติ เพื่อให้เริ่มสอนเทอมใหม่ได้ทันที
+         </div>
+         <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:12,marginBottom:20}}>
+            <div><div style={{fontSize:13,color:C.muted,marginBottom:6}}>เทอมใหม่</div>
+               <select value={termForm.term} onChange={e=>setTermForm(p=>({...p,term:parseInt(e.target.value)}))} style={{...sInp,fontFamily:'inherit'}}><option value={1}>1</option><option value={2}>2</option><option value={3}>3 (ซัมเมอร์)</option></select>
+            </div>
+            <div><div style={{fontSize:13,color:C.muted,marginBottom:6}}>ปีการศึกษาใหม่ (พ.ศ.)</div>
+               <input type="number" value={termForm.year} onChange={e=>setTermForm(p=>({...p,year:parseInt(e.target.value)}))} style={sInp}/>
+            </div>
+         </div>
+         <div style={{fontWeight:700, fontSize:15, marginBottom:10}}>ตัวเลือกการคัดลอกเพิ่มเติม</div>
+         <div style={{display:'flex',flexDirection:'column',gap:10,marginBottom:24}}>
+            <label style={{display:'flex',alignItems:'center',gap:10}}><input type="checkbox" checked disabled style={{accentColor:C.red, width:18, height:18}}/><span style={{fontSize:15,color:C.muted}}>นักเรียน ประวัติ และวิชา (บังคับคัดลอก)</span></label>
+            <label style={{display:'flex',alignItems:'center',gap:10,cursor:'pointer'}}><input type="checkbox" checked={termOpts.keepTt} onChange={()=>setTermOpts(p=>({...p,keepTt:!p.keepTt}))} style={{accentColor:C.red, width:18, height:18}}/><span style={{fontSize:15}}>คัดลอกตารางสอนเดิมมาด้วย</span></label>
+            <label style={{display:'flex',alignItems:'center',gap:10,cursor:'pointer'}}><input type="checkbox" checked={termOpts.keepSav} onChange={()=>setTermOpts(p=>({...p,keepSav:!p.keepSav}))} style={{accentColor:C.red, width:18, height:18}}/><span style={{fontSize:15}}>คัดลอกข้อมูลเงินออมเดิมมาด้วย</span></label>
+         </div>
+         <div style={{display:'flex',gap:12}}>
+            <button onClick={()=>setTermModal(false)} style={{...sBtn(false),flex:1, padding:14}}>ยกเลิก</button>
+            <button onClick={handleCreateTerm} style={{...sBtn(true),flex:1, padding:14}}>สร้างเทอมใหม่</button>
          </div>
       </Sheet>
   </div>);}
@@ -1381,17 +1511,17 @@ function StudentApp({data,update,student,onLogout}){
     <Sheet open={pinModal} title="🔑 เปลี่ยนรหัสผ่าน PIN" onClose={()=>{setPinModal(false);setPinErr('');}}><input type="password" placeholder="PIN ปัจจุบัน 4 หลัก" value={pf.cur} onChange={e=>setPf(p=>({...p,cur:e.target.value}))} style={{...sInp,marginBottom:12,textAlign:'center',letterSpacing:4,fontSize:20}} maxLength={4}/><input type="password" placeholder="PIN ใหม่ 4 หลัก" value={pf.n1} onChange={e=>setPf(p=>({...p,n1:e.target.value.replace(/\D/g,'').slice(0,4)}))} style={{...sInp,marginBottom:12,textAlign:'center',letterSpacing:4,fontSize:20}} maxLength={4}/><input type="password" placeholder="ยืนยัน PIN ใหม่" value={pf.n2} onChange={e=>setPf(p=>({...p,n2:e.target.value.replace(/\D/g,'').slice(0,4)}))} style={{...sInp,marginBottom:16,textAlign:'center',letterSpacing:4,fontSize:20}} maxLength={4}/>{pinErr&&<div style={{color:C.red,fontSize:14,marginBottom:16,padding:'10px',background:'#FEF2F2',borderRadius:8,textAlign:'center'}}>{pinErr}</div>}<div style={{display:'flex',gap:12}}><button onClick={()=>{setPinModal(false);setPinErr('');}} style={{...sBtn(false),flex:1}}>ยกเลิก</button><button onClick={changePin} style={{...sBtn(true),flex:1}}>บันทึกรหัสใหม่</button></div></Sheet></div>);}
 
 // ===== TEACHER SHELL =====
-function TeacherApp({data,update,onLogout}){const[page,setPage]=useState('home');const[drawerOpen,setDrawerOpen]=useState(false);const[fabOpen,setFabOpen]=useState(false);const[attInit,setAttInit]=useState(null);const[toastMsg,setToastMsg]=useState({msg:'',type:'info'});
+function TeacherApp({data,update,systemActions,onLogout}){const[page,setPage]=useState('home');const[drawerOpen,setDrawerOpen]=useState(false);const[fabOpen,setFabOpen]=useState(false);const[attInit,setAttInit]=useState(null);const[toastMsg,setToastMsg]=useState({msg:'',type:'info'});
   const toast=useCallback((msg,type='info')=>setToastMsg({msg,type}),[]);const openAtt=(type,classId)=>{setAttInit({type,classId});setPage('att');};useEffect(()=>{if(page!=='att')setAttInit(null);},[page]);const pageObj=NAV.find(n=>n.id===page);
   return(<div style={{minHeight:'100vh',background:C.bg}}><TopBar onMenu={()=>setDrawerOpen(true)} onLogout={onLogout} label={pageObj?`${pageObj.icon} ${pageObj.label}`:''} appName={data.appName||'ห้องเรียนของคุณครูต้นฝน'}/><Drawer open={drawerOpen} onClose={()=>setDrawerOpen(false)} current={page} onNav={setPage} data={data}/>
-    {page==='home'&&<Dashboard data={data} setPage={setPage} openAtt={openAtt}/>}{page==='att'&&<AttendancePage data={data} update={update} initType={attInit?.type} initClass={attInit?.classId} toast={toast}/>}{page==='score'&&<ScoresPage data={data} update={update} toast={toast}/>}{page==='stu'&&<StudentsPage data={data} update={update} toast={toast}/>}{page==='stat'&&<StatsPage data={data}/>}{page==='io'&&<IOPage data={data} update={update} toast={toast}/>}{page==='homeroom'&&<HomeroomPage data={data} update={update} role="teacher" currentStudentId={null} toast={toast}/>}{page==='set'&&<SettingsPage data={data} update={update} toast={toast}/>}
+    {page==='home'&&<Dashboard data={data} setPage={setPage} openAtt={openAtt}/>}{page==='att'&&<AttendancePage data={data} update={update} initType={attInit?.type} initClass={attInit?.classId} toast={toast}/>}{page==='score'&&<ScoresPage data={data} update={update} toast={toast}/>}{page==='stu'&&<StudentsPage data={data} update={update} toast={toast}/>}{page==='stat'&&<StatsPage data={data}/>}{page==='io'&&<IOPage data={data} update={update} toast={toast}/>}{page==='homeroom'&&<HomeroomPage data={data} update={update} role="teacher" currentStudentId={null} toast={toast}/>}{page==='set'&&<SettingsPage data={data} update={update} systemActions={systemActions} toast={toast}/>}
     <button onClick={()=>setFabOpen(true)} style={{position:'fixed',bottom:24,right:20,width:64,height:64,borderRadius:32,background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',border:'none',fontSize:32,cursor:'pointer',boxShadow:'0 8px 24px rgba(183,28,28,0.4)',zIndex:40,display:'flex',alignItems:'center',justifyContent:'center',transition:'transform 0.2s'}}>+</button>
     <Sheet open={fabOpen} title="➕ จัดการด่วน" onClose={()=>setFabOpen(false)}><div style={{display:'flex',flexDirection:'column',gap:12}}><button onClick={()=>{setFabOpen(false);openAtt('morning',data.homeroom);}} style={{padding:'16px 20px',background:'linear-gradient(135deg,#0284C7,#0369A1)',color:'white',border:'none',borderRadius:16,cursor:'pointer',textAlign:'left',fontFamily:'inherit',boxShadow:'0 4px 12px rgba(2,132,199,0.2)'}}><div style={{fontWeight:700,fontSize:16,marginBottom:4}}>🌅 เช็คชื่อเข้าแถว</div><div style={{fontSize:13,opacity:0.85}}>{data.homeroom}</div></button><button onClick={()=>{setFabOpen(false);openAtt('class');}} style={{padding:'16px 20px',background:`linear-gradient(135deg,${C.red},${C.dark})`,color:'white',border:'none',borderRadius:16,cursor:'pointer',textAlign:'left',fontFamily:'inherit',boxShadow:'0 4px 12px rgba(229,57,53,0.2)'}}><div style={{fontWeight:700,fontSize:16,marginBottom:4}}>📚 ตารางสอน / เช็คชื่อคาบ</div><div style={{fontSize:13,opacity:0.85}}>เปิดตารางเพื่อเช็คชื่อ</div></button><button onClick={()=>{setFabOpen(false);setPage('score');}} style={{padding:'16px 20px',background:'linear-gradient(135deg,#D97706,#B45309)',color:'white',border:'none',borderRadius:16,cursor:'pointer',textAlign:'left',fontFamily:'inherit',boxShadow:'0 4px 12px rgba(217,119,6,0.2)'}}><div style={{fontWeight:700,fontSize:16,marginBottom:4}}>📊 บันทึกคะแนน</div></button><button onClick={()=>{setFabOpen(false);setPage('stu');}} style={{padding:'16px 20px',background:C.card,color:C.text,border:`1.5px solid ${C.border}`,borderRadius:16,cursor:'pointer',textAlign:'left',fontFamily:'inherit'}}><div style={{fontWeight:700,fontSize:16}}>👤 จัดการนักเรียน</div></button></div></Sheet>
     <Toast msg={toastMsg.msg} type={toastMsg.type} onClose={()=>setToastMsg({msg:'',type:'info'})}/></div>);}
 
 // ===== MAIN =====
 export default function App(){
-  const { data, loading, update } = useFirestore();
+  const { data, loading, update, systemActions } = useFirestore();
   const [user, setUser] = useState(() => {const saved = localStorage.getItem('chinese_app_user'); return saved ? JSON.parse(saved) : null;});
   const handleLogin = (userData) => {setUser(userData); localStorage.setItem('chinese_app_user', JSON.stringify(userData));};
   const handleLogout = () => {setUser(null); localStorage.removeItem('chinese_app_user');};
@@ -1408,7 +1538,7 @@ export default function App(){
   if(!data)return <div style={{padding:40,textAlign:'center',color:C.red}}>ข้อผิดพลาด: ไม่สามารถโหลดข้อมูลจาก Firebase ได้</div>;
   if(!user)return<LoginScreen data={data} onLogin={handleLogin}/>;
   
-  if(user.role==='teacher')return<TeacherApp data={data} update={update} onLogout={handleLogout}/>;
+  if(user.role==='teacher')return<TeacherApp data={data} update={update} systemActions={systemActions} onLogout={handleLogout}/>;
   
   const studentData = data.students.find(s=>s.id===user.id);
   if (!studentData) {handleLogout(); return null;}
