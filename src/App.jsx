@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { initializeApp } from "firebase/app";
-import { getFirestore, doc, setDoc, onSnapshot } from "firebase/firestore";
+
+import { useFirestore } from './useFirestore';
 import { getStorage, ref, uploadString, getDownloadURL } from "firebase/storage";
 
 // ===== CONSTANTS =====
@@ -109,28 +109,7 @@ const calcSavings = s => {
     daysLeft = Math.max(0, Math.ceil((new Date(s.goalDate+'T00:00:00') - new Date()) / 86400000));
     dailyNeeded = daysLeft > 0 ? Math.ceil(remaining/daysLeft) : remaining;
   }
-  return { total, goal, remaining, pct, daysLeft, dailyNeeded };
-};
-
-// ===== FIREBASE SETUP & HOOKS =====
-// ⚠️ ตรวจสอบ Firebase Config ตรงนี้ให้ตรงกับโปรเจกต์ของคุณครูนะครับ
-const firebaseConfig = {
-  apiKey: "AIzaSyD5lp8QvTTHKeJu3ZP74GUjDOtXQphdIRc",
-  authDomain: "chinese-classroom-81547.firebaseapp.com",
-  projectId: "chinese-classroom-81547",
-  storageBucket: "chinese-classroom-81547.firebasestorage.app",
-  messagingSenderId: "405497440904",
-  appId: "1:405497440904:web:96721a405f2a9ba757cd3d"
-};
-
-let db, storage;
-try {
-  const app = initializeApp(firebaseConfig);
-  db = getFirestore(app);
-  storage = getStorage(app);
-} catch (e) {
-  console.warn("Firebase Init Error:", e);
-}
+  return { total, goal, remaining, pct, daysLeft, dailyNeeded };};
 
 // 📌 แก้ไขให้ตรงกับ Database เดิมที่คุณครูแคปรูปมา (app_data / main_data)
 const COLLECTION = "app_data";
