@@ -6,6 +6,7 @@ import { emptyProfile, emptyGoal, profileCompletion, calcSavings } from '../mode
 import { compressImg } from '../utils';
 import { FormInp, FormSel, Row2, Row4 } from '../components/FormInputs';
 import Sheet from '../components/Sheet';
+import ThaiAddressSelect from '../components/ThaiAddressSelect';
 
 // ─────────────────────────────────────────────
 // ProfileForm
@@ -17,6 +18,8 @@ function ProfileForm({ student, profile, onSave, onBack, toast }) {
   const homeRef         = useRef(null);
 
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
+  // อัปเดตหลายฟิลด์พร้อมกัน (ใช้กับ ThaiAddressSelect)
+  const setAddr = (updates) => setForm(p => ({ ...p, ...updates }));
 
   const handleBirthday = v => {
     let age = form.age;
@@ -98,10 +101,21 @@ function ProfileForm({ student, profile, onSave, onBack, toast }) {
             <FormInp label="หมู่ที่" val={form.village} onChange={v => set('village', v)} type="number"/>
           </Row2>
           <FormInp label="ถนน" val={form.road} onChange={v => set('road', v)}/>
-          <FormInp label="ตำบล/แขวง" val={form.subDistrict} onChange={v => set('subDistrict', v)}/>
-          <FormInp label="อำเภอ/เขต" val={form.district} onChange={v => set('district', v)}/>
-          <FormInp label="จังหวัด" val={form.province} onChange={v => set('province', v)}/>
-          <FormInp label="รหัสไปรษณีย์" val={form.postalCode} onChange={v => set('postalCode', v)} placeholder="50000"/>
+
+          {/* Cascading Province → District → Subdistrict → Postal */}
+          <div style={{ borderTop: `1px solid ${C.border}`, paddingTop: 14, marginTop: 4, marginBottom: 4 }}>
+            <div style={{ fontSize: 12, color: C.muted, marginBottom: 12, fontWeight: 500 }}>
+              🗺️ เลือกจังหวัด → อำเภอ → ตำบล (ระบบจะกรอกรหัสไปรษณีย์ให้อัตโนมัติ)
+            </div>
+            <ThaiAddressSelect
+              province={form.province}
+              district={form.district}
+              subDistrict={form.subDistrict}
+              postalCode={form.postalCode}
+              onChange={setAddr}
+            />
+          </div>
+
           <button onClick={() => setSec(2)} style={{ ...sBtn(true), width: '100%', marginTop: 8 }}>ถัดไป: ครอบครัว →</button>
         </div>
       )}
@@ -418,7 +432,7 @@ function SavingsSection({ data, update, role, hStu, myStudentId, toast }) {
   const [viewId,    setViewId]    = useState(role === 'student' ? myStudentId : null);
   const [goalModal, setGoalModal] = useState(false);
   const [goalForm,  setGoalForm]  = useState({ goalName: '', goal: '', goalDate: '' });
-  const [entry,     setEntry]     = useState({ amount: '', note: '', date: todayStr() });
+  const [entry,     setEntry]     = useState({ amount: '', note: '', date: todayStr(), type: 'deposit' });
 
   const mySav = viewId ? (data.savings?.[viewId] || emptyGoal()) : null;
   const calc  = mySav  ? calcSavings(mySav) : null;
@@ -432,9 +446,26 @@ function SavingsSection({ data, update, role, hStu, myStudentId, toast }) {
   const addEntry = () => {
     const amount = parseFloat(entry.amount);
     if (!amount || amount <= 0) return toast('กรอกจำนวนเงิน', 'error');
-    updateSavings(viewId, s => ({ ...s, entries: [...(s.entries || []), { ...entry, amount, id: Date.now().toString() }] }));
-    setEntry(p => ({ ...p, amount: '', note: '' }));
-    toast(`บันทึก ฿${amount.toLocaleString()} แล้ว`, 'success');
+    const isWithdraw = entry.type === 'withdraw';
+    if (isWithdraw && amount > (calc?.total || 0)) {
+      return toast(`ยอดเงินไม่เพียงพอ (มีอยู่ ฿${(calc?.total || 0).toLocaleString()})`, 'error');
+    }
+    const finalAmount = isWithdraw ? -amount : amount;
+    updateSavings(viewId, s => ({
+      ...s,
+      entries: [...(s.entries || []), {
+        ...entry,
+        amount: finalAmount,
+        id: Date.now().toString(),
+      }],
+    }));
+    setEntry(p => ({ ...p, amount: '', note: '', type: 'deposit' }));
+    toast(
+      isWithdraw
+        ? `ถอนเงิน ฿${amount.toLocaleString()} แล้ว`
+        : `ฝากเงิน ฿${amount.toLocaleString()} แล้ว`,
+      'success'
+    );
   };
 
   const removeEntry = id => updateSavings(viewId, s => ({ ...s, entries: (s.entries || []).filter(e => e.id !== id) }));
@@ -524,32 +555,91 @@ function SavingsSection({ data, update, role, hStu, myStudentId, toast }) {
           {calc.pct >= 100 && <div style={{ background: 'rgba(22,163,74,0.8)', borderRadius: 8, padding: 10, textAlign: 'center', fontSize: 15, fontWeight: 700 }}>🎉 ถึงเป้าหมายแล้ว!</div>}
         </>}
 
-        {role === 'teacher' && (
-          <button
-            onClick={() => { setGoalForm({ goalName: mySav.goalName || '', goal: mySav.goal || '', goalDate: mySav.goalDate || '' }); setGoalModal(true); }}
-            style={{ marginTop: 12, width: '100%', padding: '9px', background: 'rgba(255,255,255,0.2)', border: '1px solid rgba(255,255,255,0.4)', color: 'white', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600, fontSize: 14 }}
-          >
-            🎯 {mySav.goal ? 'แก้ไขเป้าหมาย' : 'ตั้งเป้าหมายการออม'}
-          </button>
-        )}
+        {/* นักเรียนและครูตั้งเป้าหมายได้ทั้งคู่ */}
+        <button
+          onClick={() => { setGoalForm({ goalName: mySav.goalName || '', goal: mySav.goal || '', goalDate: mySav.goalDate || '' }); setGoalModal(true); }}
+          style={{ marginTop: 12, width: '100%', padding: '9px', background: 'rgba(255,255,255,0.2)', border: '1px solid rgba(255,255,255,0.4)', color: 'white', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit', fontWeight: 600, fontSize: 14 }}
+        >
+          🎯 {mySav.goal ? 'แก้ไขเป้าหมาย' : 'ตั้งเป้าหมายการออม'}
+        </button>
       </div>
 
       {/* Add entry (teacher only) */}
       {role === 'teacher' && (
         <div style={sCard}>
-          <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 12, color: C.text }}>💰 บันทึกการออม</div>
+          {/* Toggle: ฝาก / ถอน */}
+          <div style={{ display: 'flex', gap: 6, marginBottom: 14, background: '#F1F5F9', borderRadius: 12, padding: 4 }}>
+            {[
+              { key: 'deposit',  icon: '💰', label: 'ฝากเงิน',  color: '#16a34a' },
+              { key: 'withdraw', icon: '💸', label: 'ถอนเงิน',  color: '#dc2626' },
+            ].map(t => (
+              <button
+                key={t.key}
+                onClick={() => setEntry(p => ({ ...p, type: t.key }))}
+                style={{
+                  flex: 1, padding: '9px 0', border: 'none', borderRadius: 9,
+                  cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700, fontSize: 14,
+                  background: entry.type === t.key ? 'white' : 'transparent',
+                  color: entry.type === t.key ? t.color : C.muted,
+                  boxShadow: entry.type === t.key ? '0 2px 8px rgba(0,0,0,0.1)' : 'none',
+                  transition: 'all 0.18s',
+                }}
+              >{t.icon} {t.label}</button>
+            ))}
+          </div>
+
+          {/* แสดง balance เตือนเมื่อถอน */}
+          {entry.type === 'withdraw' && (
+            <div style={{
+              background: '#FEF2F2', border: '1px solid #FECACA', borderRadius: 10,
+              padding: '10px 14px', marginBottom: 12, display: 'flex', justifyContent: 'space-between',
+            }}>
+              <span style={{ fontSize: 13, color: '#B91C1C' }}>ยอดคงเหลือที่ถอนได้</span>
+              <span style={{ fontSize: 15, fontWeight: 800, color: '#B91C1C' }}>฿{(calc?.total || 0).toLocaleString()}</span>
+            </div>
+          )}
+
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 8 }}>
             <div>
               <label style={sLabel}>จำนวนเงิน (บาท)</label>
-              <input type="number" value={entry.amount} onChange={e => setEntry(p => ({ ...p, amount: e.target.value }))} onKeyDown={e => e.key === 'Enter' && addEntry()} style={{ ...sInp, fontSize: 18, fontWeight: 700, textAlign: 'center' }} placeholder="50"/>
+              <input
+                type="number"
+                value={entry.amount}
+                onChange={e => setEntry(p => ({ ...p, amount: e.target.value }))}
+                onKeyDown={e => e.key === 'Enter' && addEntry()}
+                style={{
+                  ...sInp, fontSize: 18, fontWeight: 700, textAlign: 'center',
+                  borderColor: entry.type === 'withdraw' ? '#FCA5A5' : C.border,
+                  color: entry.type === 'withdraw' ? '#DC2626' : C.text,
+                }}
+                placeholder="0"
+              />
             </div>
             <div>
               <label style={sLabel}>วันที่</label>
               <input type="date" value={entry.date} onChange={e => setEntry(p => ({ ...p, date: e.target.value }))} style={sInp}/>
             </div>
           </div>
-          <input value={entry.note} onChange={e => setEntry(p => ({ ...p, note: e.target.value }))} style={{ ...sInp, marginBottom: 10 }} placeholder="หมายเหตุ เช่น ถอนหรือฝากเพิ่ม"/>
-          <button onClick={addEntry} style={{ ...sBtn(true), width: '100%', padding: 12 }}>+ บันทึกรายการ</button>
+          <input
+            value={entry.note}
+            onChange={e => setEntry(p => ({ ...p, note: e.target.value }))}
+            style={{ ...sInp, marginBottom: 10 }}
+            placeholder={entry.type === 'withdraw' ? 'เหตุผลการถอน เช่น ซื้อของ' : 'หมายเหตุ (ไม่บังคับ)'}
+          />
+          <button
+            onClick={addEntry}
+            style={{
+              ...sBtn(true), width: '100%', padding: 12,
+              background: entry.type === 'withdraw'
+                ? 'linear-gradient(135deg,#DC2626,#B91C1C)'
+                : undefined,
+              boxShadow: entry.type === 'withdraw'
+                ? '0 4px 14px rgba(220,38,38,0.3)'
+                : undefined,
+            }}
+          >
+            {entry.type === 'withdraw' ? '💸 ถอนเงิน' : '💰 ฝากเงิน'}
+          </button>
         </div>
       )}
 
@@ -561,12 +651,25 @@ function SavingsSection({ data, update, role, hStu, myStudentId, toast }) {
       {(mySav.entries || []).length === 0 && <div style={{ textAlign: 'center', color: C.muted, padding: 40 }}>ยังไม่มีรายการทำธุรกรรม</div>}
       {[...(mySav.entries || [])].sort((a, b) => (b.date || '').localeCompare(a.date || '')).map((e, i) => {
         const amt   = parseFloat(e.amount);
-        const isDep = amt > 0;
+        const isDep = amt >= 0;
         return (
           <div key={e.id || i} style={{ ...sCard, marginBottom: 6, padding: '10px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <div>
-              <div style={{ fontSize: 16, fontWeight: 700, color: isDep ? '#16a34a' : '#dc2626' }}>{isDep ? '+' : ''}฿{amt.toLocaleString()}</div>
-              <div style={{ fontSize: 12, color: C.muted }}>{fmtDate(e.date)}{e.note ? ` · ${e.note}` : ''}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+              {/* ไอคอน */}
+              <div style={{
+                width: 38, height: 38, borderRadius: 12,
+                background: isDep ? '#DCFCE7' : '#FEE2E2',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                fontSize: 18, flexShrink: 0,
+              }}>{isDep ? '💰' : '💸'}</div>
+              <div>
+                <div style={{ fontSize: 15, fontWeight: 700, color: isDep ? '#16a34a' : '#dc2626' }}>
+                  {isDep ? '+' : ''}฿{Math.abs(amt).toLocaleString()}
+                </div>
+                <div style={{ fontSize: 12, color: C.muted }}>
+                  {isDep ? 'ฝาก' : 'ถอน'} · {fmtDate(e.date)}{e.note ? ` · ${e.note}` : ''}
+                </div>
+              </div>
             </div>
             {role === 'teacher' && (
               <button onClick={() => removeEntry(e.id || i)} style={{ background: 'none', border: 'none', color: '#9ca3af', cursor: 'pointer', fontSize: 24, padding: '4px 8px', lineHeight: 1 }}>×</button>
@@ -575,8 +678,8 @@ function SavingsSection({ data, update, role, hStu, myStudentId, toast }) {
         );
       })}
 
-      {/* Goal modal */}
-      {role === 'teacher' && (
+      {/* Goal modal — ทั้งครูและนักเรียนตั้งเป้าได้ */}
+      {(
         <Sheet open={goalModal} title="🎯 ตั้งเป้าหมายการออม" onClose={() => setGoalModal(false)}>
           <div style={{ fontSize: 13, color: C.muted, marginBottom: 6 }}>ชื่อเป้าหมาย</div>
           <input value={goalForm.goalName} onChange={e => setGoalForm(p => ({ ...p, goalName: e.target.value }))} style={{ ...sInp, marginBottom: 12 }} placeholder="เช่น ซื้อโทรศัพท์ ทริปปิดเทอม"/>
