@@ -113,6 +113,7 @@ const calcSavings = s => {
 };
 
 // ===== FIREBASE SETUP & HOOKS =====
+// ⚠️ ตรวจสอบ Firebase Config ตรงนี้ให้ตรงกับโปรเจกต์ของคุณครูนะครับ
 const firebaseConfig = {
   apiKey: "AIzaSyD5lp8QvTTHKeJu3ZP74GUjDOtXQphdIRc",
   authDomain: "chinese-classroom-81547.firebaseapp.com",
@@ -131,8 +132,9 @@ try {
   console.warn("Firebase Init Error:", e);
 }
 
-const DEFAULT_DOC_ID = "main";
-const COLLECTION = "classrooms";
+// 📌 แก้ไขให้ตรงกับ Database เดิมที่คุณครูแคปรูปมา (app_data / main_data)
+const COLLECTION = "app_data";
+const DEFAULT_DOC_ID = "main_data";
 
 const isBase64 = s => typeof s === 'string' && s.startsWith('data:image');
 const uploadImg = async (base64, path) => {
@@ -195,18 +197,28 @@ function useFirestore() {
   useEffect(() => {
     if (!db) { setLoading(false); return; }
     const configRef = doc(db, COLLECTION, "_system_config");
+    
     const unsubscribe = onSnapshot(configRef, (snap) => {
       if (snap.exists()) {
         setSysConfig(snap.data());
       } else {
-        // ค่าเริ่มต้น หากยังไม่เคยตั้งค่า
-        const initConf = { activeDocId: DEFAULT_DOC_ID, history: [{id: DEFAULT_DOC_ID, label: "ภาคเรียนปัจจุบัน"}] };
-        setDoc(configRef, initConf).catch(err => console.error(err));
+        // ค่าเริ่มต้น หากยังไม่เคยตั้งค่า ให้ชี้ไปที่ข้อมูลเดิม (main_data)
+        const initConf = { activeDocId: DEFAULT_DOC_ID, history: [{id: DEFAULT_DOC_ID, label: "ภาคเรียนปัจจุบัน (ข้อมูลเดิม)"}] };
+        setDoc(configRef, initConf).catch(err => {
+            console.error("สร้างไฟล์ตั้งค่าไม่ได้ ติดเรื่อง Permission", err);
+            // ถ้าสร้างไฟล์ Config ไม่ได้ ให้รันแบบออฟไลน์ชั่วคราวเพื่อให้ไม่ค้าง
+        });
         setSysConfig(initConf);
       }
     }, (error) => {
       console.error("Config fetch error:", error);
+      alert("ไม่สามารถเชื่อมต่อฐานข้อมูลได้ กรุณาตรวจสอบแท็บ Rules ใน Firebase");
+      // 📌 แก้ไขให้หน้าจอหายค้างเมื่อเกิด Error จาก Firebase Rules
+      setLoading(false); 
+      // fallback กรณีดึงข้อมูล _system_config ไม่ได้ ให้ชี้ไปที่ข้อมูลเดิม
+      setSysConfig({ activeDocId: DEFAULT_DOC_ID, history: [{id: DEFAULT_DOC_ID, label: "ข้อมูลเดิม"}] });
     });
+    
     return () => unsubscribe();
   }, []);
 
@@ -225,6 +237,7 @@ function useFirestore() {
           if(!fetchedData.timetable) fetchedData.timetable = {};
           setData(fetchedData);
         } else {
+          // ถ้าไม่มีเอกสาร ให้สร้างใหม่โดยใช้โครงสร้างเริ่มต้น
           const defaultData = initData();
           setDoc(docRef, defaultData).catch(err => console.error("Create initial data error:", err));
           setData(defaultData);
@@ -233,7 +246,7 @@ function useFirestore() {
       },
       (error) => {
         console.error("Firestore Error:", error);
-        alert("เชื่อมต่อฐานข้อมูลไม่ได้ กรุณาเช็ก Firebase Rules");
+        alert("เชื่อมต่อฐานข้อมูลข้อมูลไม่ได้ กรุณาเช็ก Firebase Rules");
         setLoading(false);
       }
     );
@@ -274,23 +287,18 @@ function useFirestore() {
     createNewTerm: async (term, year, opts) => {
       if(!db || !sysConfig || !data) return;
       
-      // สร้าง ID ใหม่สำหรับเอกสารของเทอมใหม่ (ป้องกันชื่อซ้ำด้วย Date.now)
       const newDocId = `term_${term}_${year}_${Date.now()}`; 
       const label = `ภาคเรียน ${term}/${year}`;
       
-      // ก๊อปปี้ข้อมูลโครงสร้างพื้นฐานเดิม (นักเรียน, วิชา, ตั้งค่า) ไปยังเอกสารใหม่
       const newData = { ...data, term: parseInt(term), year: parseInt(year) };
 
-      // เลือกล้างข้อมูลที่ไม่ต้องการยกยอดไป
       if(!opts.keepAtt) newData.attendance = [];
       if(!opts.keepScore) { newData.scores = []; newData.categories = []; }
       if(!opts.keepTt) newData.timetable = {};
       if(!opts.keepSav) newData.savings = {};
 
-      // บันทึกเอกสารของเทอมใหม่
       await setDoc(doc(db, COLLECTION, newDocId), newData);
 
-      // อัปเดตให้ระบบชี้มาที่เทอมใหม่ และเก็บประวัติเทอมเก่าไว้
       const newHistory = [...(sysConfig.history||[]), { id: newDocId, label }];
       await setDoc(doc(db, COLLECTION, "_system_config"), { activeDocId: newDocId, history: newHistory });
     }
@@ -1042,7 +1050,6 @@ function AttendancePage({data,update,initType,initClass,toast}){
       {!cls&&tab==='class'&&<div style={{textAlign:'center',color:C.muted,padding:48}}>📋 กรุณาเลือกห้องเรียนด้านบน</div>}
     </>}
 
-    {/* Sheets สำหรับเลือกข้อมูลแทน Dropdown */}
     <Sheet open={sheetOpen?.type==='class'} title="🏫 เลือกห้องเรียน" onClose={()=>setSheetOpen(null)}>
       <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10}}>
          {classesHave.map(c=><button key={c} onClick={()=>{setCls(c);setSheetOpen(null);}} style={{padding:14,borderRadius:12,border:`2px solid ${cls===c?C.red:C.border}`,background:cls===c?C.light:'white',color:cls===c?C.red:C.text,fontWeight:cls===c?700:500,fontSize:16,fontFamily:'inherit'}}>{c}</button>)}
@@ -1379,7 +1386,7 @@ function SettingsPage({data, update, systemActions, toast}){
        const newHistory = (systemActions.sysConfig.history || []).map(h => 
            h.id === systemActions.sysConfig.activeDocId ? { ...h, label: newLabel } : h
        );
-       await setDoc(doc(getFirestore(), "classrooms", "_system_config"), {
+       await setDoc(doc(getFirestore(), "app_data", "_system_config"), {
            ...systemActions.sysConfig,
            history: newHistory
        });
@@ -1534,8 +1541,17 @@ export default function App(){
     document.body.style.margin='0';
   },[]);
 
+  // 📌 เพิ่มกลไกหลุดออกจากหน้า Loading หากเกิด Error นานเกินไป
+  useEffect(() => {
+    let timeout;
+    if (loading) {
+       timeout = setTimeout(() => setLoading(false), 5000); // ถ้าโหลดเกิน 5 วิ ให้บังคับดับ
+    }
+    return () => clearTimeout(timeout);
+  }, [loading]);
+
   if(loading)return<div style={{display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',height:'100vh',background:C.bg}}><div style={{fontSize:64,color:C.red}}>中</div><div style={{color:C.muted,marginTop:12,fontWeight:500}}>กำลังเชื่อมต่อฐานข้อมูล...</div></div>;
-  if(!data)return <div style={{padding:40,textAlign:'center',color:C.red}}>ข้อผิดพลาด: ไม่สามารถโหลดข้อมูลจาก Firebase ได้</div>;
+  if(!data)return <div style={{padding:40,textAlign:'center',color:C.red}}>ข้อผิดพลาด: ไม่สามารถโหลดข้อมูลจาก Firebase ได้ กรุณาตรวจสอบแท็บ Rules ใน Firebase ของคุณ</div>;
   if(!user)return<LoginScreen data={data} onLogin={handleLogin}/>;
   
   if(user.role==='teacher')return<TeacherApp data={data} update={update} systemActions={systemActions} onLogout={handleLogout}/>;
