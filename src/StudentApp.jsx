@@ -2,8 +2,9 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { C, STATUS, S_ORDER } from './constants';
 import { sCard, sBtn, sInp } from './styles';
 import { fmtDate, calcAttRate, calcConduct, getCatMax, getCatScore, hasCatScore, getSubjectGrade, getGrade, gradeColor, gradeBg } from './utils';
-import Sheet from './components/Sheet';
-import HomeroomPage from './pages/HomeroomPage';
+import Sheet        from './components/Sheet';
+import HomeroomPage  from './pages/HomeroomPage';
+import CalendarPage  from './pages/CalendarPage';
 
 export default function StudentApp({ data, update, student, onLogout }) {
   const [tab,      setTab]      = useState('scores');
@@ -50,7 +51,7 @@ export default function StudentApp({ data, update, student, onLogout }) {
     setPf({ cur: '', n1: '', n2: '' });
   };
 
-  const tabs = [['scores', '📊 คะแนน'], ['att', '✓ เข้าเรียน'], ...(isHomeroom ? [['homeroom', '🏫 ประจำชั้น']] : [])];
+  const tabs = [['scores', '📊 คะแนน'], ['att', '✓ เข้าเรียน'], ['cal', '📅 ปฏิทิน'], ...(isHomeroom ? [['homeroom', '🏫 ประจำชั้น']] : [])];
 
   return (
     <div style={{ minHeight: '100vh', background: C.bg }}>
@@ -199,6 +200,11 @@ export default function StudentApp({ data, update, student, onLogout }) {
                 </>
             }
           </div>
+        )}
+
+        {/* ── Calendar tab ── */}
+        {tab === 'cal' && (
+          <CalendarPage data={data} update={update} role="student"/>
         )}
 
         {/* ── Homeroom tab ── */}

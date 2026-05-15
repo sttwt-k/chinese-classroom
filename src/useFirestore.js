@@ -38,6 +38,7 @@ const initData = () => ({
   savings: {},
   timetable: {},
   conduct: { presentScore: 1, absentScore: -1, lateGroup: 3, latePenalty: -1, minAttPct: 20 },
+  calendar: [],
 });
 
 // Firebase ไม่รับ undefined หรือ function — ลบออกก่อนบันทึก

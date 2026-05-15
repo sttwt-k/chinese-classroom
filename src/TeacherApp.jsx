@@ -12,8 +12,10 @@ import ScoresPage   from './pages/ScoresPage';
 import StudentsPage from './pages/StudentsPage';
 import StatsPage    from './pages/StatsPage';
 import IOPage       from './pages/IOPage';
-import HomeroomPage from './pages/HomeroomPage';
-import SettingsPage from './pages/SettingsPage';
+import HomeroomPage    from './pages/HomeroomPage';
+import CalendarPage    from './pages/CalendarPage';
+import ReportCardPage  from './pages/ReportCardPage';
+import SettingsPage    from './pages/SettingsPage';
 
 export default function TeacherApp({ data, update, systemActions, saveStatus, onLogout }) {
   const [page,       setPage]       = useState('home');
@@ -46,8 +48,10 @@ export default function TeacherApp({ data, update, systemActions, saveStatus, on
       {page === 'stu'      && <StudentsPage  data={data} update={update} toast={toast}/>}
       {page === 'stat'     && <StatsPage     data={data}/>}
       {page === 'io'       && <IOPage        data={data} update={update} toast={toast}/>}
-      {page === 'homeroom' && <HomeroomPage  data={data} update={update} role="teacher" currentStudentId={null} toast={toast}/>}
-      {page === 'set'      && <SettingsPage  data={data} update={update} systemActions={systemActions} toast={toast}/>}
+      {page === 'homeroom' && <HomeroomPage   data={data} update={update} role="teacher" currentStudentId={null} toast={toast}/>}
+      {page === 'cal'      && <CalendarPage   data={data} update={update} role="teacher" toast={toast}/>}
+      {page === 'report'   && <ReportCardPage data={data}/>}
+      {page === 'set'      && <SettingsPage   data={data} update={update} systemActions={systemActions} toast={toast}/>}
 
       {/* FAB */}
       <button

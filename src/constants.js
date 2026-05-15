@@ -48,9 +48,19 @@ export const NAV = [
   { id:'stu',      icon:'👥', label:'นักเรียน'        },
   { id:'stat',     icon:'📈', label:'สถิติ'            },
   { id:'homeroom', icon:'🏫', label:'ประจำชั้น'       },
+  { id:'cal',      icon:'📅', label:'ปฏิทิน'           },
+  { id:'report',  icon:'📄', label:'สลิปผลการเรียน'  },
   { id:'io',       icon:'📥', label:'นำเข้า/ส่งออก'  },
   { id:'set',      icon:'⚙️', label:'ตั้งค่า'          },
 ];
+
+export const CALENDAR_TYPES = {
+  exam:     { label:'สอบ',      color:'#dc2626', bg:'#fee2e2', icon:'📝' },
+  holiday:  { label:'วันหยุด',  color:'#2563eb', bg:'#dbeafe', icon:'🏖️' },
+  activity: { label:'กิจกรรม',  color:'#16a34a', bg:'#dcfce7', icon:'🎉' },
+  meeting:  { label:'ประชุม',   color:'#d97706', bg:'#fef3c7', icon:'👥' },
+  other:    { label:'อื่นๆ',    color:'#6b7280', bg:'#f3f4f6', icon:'📌' },
+};
 
 // ข้อมูลสำหรับตารางสอน
 export const DAYS = ['จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์'];

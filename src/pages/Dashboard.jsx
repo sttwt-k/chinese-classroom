@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { C, STATUS, S_ORDER } from '../constants';
+import { C, STATUS, S_ORDER, CALENDAR_TYPES } from '../constants';
 import { sCard, sBtn } from '../styles';
 import { todayStr, fmtDate, calcAttRate, sortClasses } from '../utils';
 
@@ -137,6 +137,62 @@ export default function Dashboard({ data, setPage, openAtt }) {
           ))}
         </div>
       )}
+
+      {/* Upcoming events (next 7 days) */}
+      {(() => {
+        const cal   = data.calendar || [];
+        const today2 = todayStr();
+        const limit = new Date(today2 + 'T00:00:00');
+        limit.setDate(limit.getDate() + 7);
+        const limitStr = limit.toISOString().slice(0,10);
+        const upcoming = cal
+          .filter(ev => ev.date >= today2 && ev.date <= limitStr)
+          .sort((a,b) => a.date.localeCompare(b.date))
+          .slice(0, 5);
+        if (!upcoming.length) return null;
+        return (
+          <div style={{ ...sCard, padding:18, marginBottom:16 }}>
+            <div style={{ fontWeight:700, fontSize:15, color:C.text, marginBottom:12 }}>
+              📅 กิจกรรมที่กำลังจะมาถึง
+            </div>
+            {upcoming.map(ev => {
+              const cfg = CALENDAR_TYPES[ev.type] || CALENDAR_TYPES.other;
+              return (
+                <div key={ev.id} style={{
+                  display:'flex', alignItems:'center', gap:12,
+                  padding:'9px 0', borderTop:`1px solid ${C.border}`,
+                }}>
+                  <span style={{
+                    width:34, height:34, borderRadius:10, background:cfg.bg,
+                    display:'flex', alignItems:'center', justifyContent:'center',
+                    fontSize:18, flexShrink:0,
+                  }}>{cfg.icon}</span>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontWeight:600, fontSize:14, color:C.text,
+                                  overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap' }}>
+                      {ev.title}
+                    </div>
+                    <div style={{ fontSize:12, color:C.muted, marginTop:2 }}>{fmtDate(ev.date)}</div>
+                  </div>
+                  <span style={{
+                    fontSize:11, fontWeight:700, color:cfg.color,
+                    background:cfg.bg, padding:'2px 8px', borderRadius:20,
+                    border:`1px solid ${cfg.color}44`, whiteSpace:'nowrap', flexShrink:0,
+                  }}>{cfg.label}</span>
+                </div>
+              );
+            })}
+            <button
+              onClick={() => setPage('cal')}
+              style={{
+                marginTop:12, background:'none', border:`1px solid ${C.border}`,
+                borderRadius:10, padding:'8px 16px', cursor:'pointer',
+                fontSize:13, color:C.muted, fontFamily:'inherit', width:'100%',
+              }}
+            >ดูปฏิทินทั้งหมด →</button>
+          </div>
+        );
+      })()}
 
       {/* Navigation shortcuts */}
       <div style={{ display:'grid', gridTemplateColumns:'1fr 1fr', gap:12 }}>
