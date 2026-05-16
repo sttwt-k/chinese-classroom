@@ -139,7 +139,8 @@ export default function CalendarPage({ data, update, role, toast }) {
       let cur = new Date(start + 'T00:00:00');
       const stop = new Date(end + 'T00:00:00');
       while (cur <= stop) {
-        const key = cur.toISOString().slice(0,10);
+        // ใช้ local date components — ไม่ใช้ toISOString() เพราะแปลงเป็น UTC แล้วเลื่อนวัน
+        const key = toISO(cur.getFullYear(), cur.getMonth(), cur.getDate());
         if (!m[key]) m[key] = [];
         m[key].push(ev);
         cur.setDate(cur.getDate() + 1);
