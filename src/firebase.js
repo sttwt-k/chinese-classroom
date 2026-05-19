@@ -1,6 +1,8 @@
 import { initializeApp } from "firebase/app";
 import { getFirestore } from "firebase/firestore";
 import { getStorage } from "firebase/storage";
+// 1. Import App Check เพิ่มเข้ามา
+import { initializeAppCheck, ReCaptchaV3Provider } from "firebase/app-check";
 
 // ⚠️ วาง Firebase Config ของคุณครูตรงนี้นะครับ
 const firebaseConfig = {
@@ -16,12 +18,20 @@ const firebaseConfig = {
 let app;
 let db;
 let storage;
+let appCheck; // เพิ่มตัวแปรสำหรับ App Check
 
 try {
   app = initializeApp(firebaseConfig);
+  
+  // 2. เริ่มต้นระบบ App Check ทันทีหลังจาก initializeApp
+  appCheck = initializeAppCheck(app, {
+    provider: new ReCaptchaV3Provider('6Lcsj_EsAAAAADoj6fNXjm3PHBRTXITBkdvA4exF'), // <--- วาง Site Key ตรงนี้ครับ
+    isTokenAutoRefreshEnabled: true // ให้ระบบต่ออายุบัตรผ่านอัตโนมัติ
+  });
+
   db = getFirestore(app);
   storage = getStorage(app);
-  console.log("🔥 Firebase initialized successfully");
+  console.log("🔥 Firebase initialized successfully (with App Check 🛡️)");
 } catch (error) {
   console.error("❌ Firebase initialization error:", error);
 }
