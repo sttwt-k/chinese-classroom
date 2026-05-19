@@ -5,15 +5,12 @@ import { db } from "./firebase";
 // ─── Document layout ─────────────────────────────────────────────────────────
 //  app_data/main_data          ← students, subjects, scores, settings, timetable…
 //  app_data/att_2569-05        ← attendance records for year-month 2569-05
-//  app_data/att_2569-06        ← attendance records for year-month 2569-06
 //  …
-//
-// แยก attendance ออกจาก main_data เพราะ Firestore มี hard limit 1 MB/document
-// 400 นักเรียน × 100 วัน = ~4 MB → เกินแน่ถ้าเก็บรวมกัน
 // ─────────────────────────────────────────────────────────────────────────────
 
-const COLLECTION = "app_data";
-const MAIN_DOC   = "main_data";
+const COLLECTION  = "app_data";
+const MAIN_DOC    = "main_data";
+const BACKUP_KEY  = "chinese_classroom_backup_v2"; // localStorage key
 
 // "2569-05-15" → "2569-05"
 const toYM = (date) => (date ? date.substring(0, 7) : null);
@@ -41,7 +38,33 @@ const initData = () => ({
   calendar: [],
 });
 
-// Firebase ไม่รับ undefined หรือ function — ลบออกก่อนบันทึก
+// ─── LocalStorage backup ──────────────────────────────────────────────────────
+// บันทึก snapshot ลง localStorage หลังทุก save สำเร็จ (ไม่รวม attendance เพราะใหญ่)
+const saveLocalBackup = (fullData) => {
+  try {
+    const { attendance: _att, ...rest } = fullData;
+    const payload = JSON.stringify({ ts: Date.now(), data: rest });
+    // ถ้าข้อมูลใหญ่เกิน ~4 MB ให้ตัด profiles/savings ออกก่อน
+    if (payload.length > 4_000_000) {
+      const slim = { ...rest, profiles: {}, savings: {} };
+      localStorage.setItem(BACKUP_KEY, JSON.stringify({ ts: Date.now(), data: slim, slim: true }));
+    } else {
+      localStorage.setItem(BACKUP_KEY, payload);
+    }
+  } catch (e) {
+    console.warn("LocalStorage backup failed:", e);
+  }
+};
+
+const loadLocalBackup = () => {
+  try {
+    const raw = localStorage.getItem(BACKUP_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw); // { ts, data, slim? }
+  } catch { return null; }
+};
+
+// ─── Firebase ไม่รับ undefined หรือ function ──────────────────────────────────
 const sanitize = v => {
   if (v === undefined || typeof v === 'function') return null;
   if (v === null || typeof v !== 'object') return v;
@@ -74,11 +97,17 @@ const mergeData = (mainDoc, attCache) => ({
   attendance: Object.values(attCache).flat(),
 });
 
+// ─── ตรวจว่า doc นี้เป็น "ข้อมูลว่างเปล่า" (เพิ่งสร้างใหม่) หรือเปล่า
+const isEmptyDoc = (d) =>
+  !d || ((!d.students || d.students.length === 0) && (!d.subjects || d.subjects.length <= 1));
+
 export default function useFirestore() {
-  const [data,       setData]       = useState(null);
-  const [loading,    setLoading]    = useState(true);
-  const [error,      setError]      = useState(null);
-  const [saveStatus, setSaveStatus] = useState('idle');
+  const [data,        setData]        = useState(null);
+  const [loading,     setLoading]     = useState(true);
+  const [error,       setError]       = useState(null);
+  const [saveStatus,  setSaveStatus]  = useState('idle');
+  // แจ้งเตือนเมื่อพบว่าข้อมูลใน Firebase ว่างเปล่าแต่มี backup ใน localStorage
+  const [backupAlert, setBackupAlert] = useState(null); // null | { ts, studentCount }
 
   const dirtyRef    = useRef(false);
   const attCacheRef = useRef({});   // { "2569-05": [records…], … }
@@ -108,21 +137,55 @@ export default function useFirestore() {
         let mainDoc;
 
         if (!snap.exists()) {
-          // ─── ไม่มีข้อมูล: สร้าง default ────────────────────────────────
-          const full = initData();
-          const { mainDoc: md } = splitData(full);
+          // ── กันกันไว้: ตรวจซ้ำด้วย getDoc ก่อนเขียน initData ──────────────
+          // onSnapshot บางครั้งแจ้ง exists=false ระหว่าง network glitch
+          // ถ้า getDoc ยืนยันว่าไม่มีจริง ค่อยสร้าง default
+          let confirmed = false;
           try {
-            await setDoc(mainRef, sanitize(md));
-            mainDoc = md;
-          } catch (err) {
-            setError("ไม่มีสิทธิ์สร้างข้อมูลเริ่มต้น (ติด Firebase Rules)");
-            setLoading(false);
+            const confirmSnap = await getDoc(mainRef);
+            confirmed = !confirmSnap.exists();
+            if (!confirmed) {
+              // document มีอยู่จริง — ใช้ข้อมูลจาก confirmSnap แทน
+              console.warn("⚠️ onSnapshot said no-exist but getDoc found document — using getDoc data");
+              mainDoc = confirmSnap.data();
+            }
+          } catch (e) {
+            // getDoc ล้มเหลว — ไม่เขียน initData ทับ
+            console.error("getDoc confirm failed:", e);
+            if (mounted) { setLoading(false); }
             return;
+          }
+
+          if (confirmed) {
+            // ── ตรวจ localStorage backup ก่อนเขียน initData ────────────────
+            const backup = loadLocalBackup();
+            if (backup?.data?.students?.length > 0) {
+              // มี backup ที่มีข้อมูลจริง — แจ้งเตือนแทนการเขียนทับ
+              console.warn("⚠️ Firebase doc missing but local backup exists — NOT writing initData");
+              if (mounted) {
+                setBackupAlert({ ts: backup.ts, studentCount: backup.data.students.length });
+                setLoading(false);
+              }
+              return;
+            }
+
+            // ไม่มี backup — สร้าง default ใหม่จริงๆ
+            const full = initData();
+            const { mainDoc: md } = splitData(full);
+            try {
+              await setDoc(mainRef, sanitize(md));
+              mainDoc = md;
+              console.log("✅ Created new default document");
+            } catch (err) {
+              setError("ไม่มีสิทธิ์สร้างข้อมูลเริ่มต้น (ติด Firebase Rules)");
+              setLoading(false);
+              return;
+            }
           }
         } else {
           mainDoc = snap.data();
 
-          // ─── MIGRATION: ถ้าข้อมูลเก่าเก็บ attendance ไว้ใน main_data ──
+          // ── MIGRATION: ถ้าข้อมูลเก่าเก็บ attendance ไว้ใน main_data ────────
           if (
             Array.isArray(mainDoc.attendance) &&
             mainDoc.attendance.length > 0 &&
@@ -133,7 +196,6 @@ export default function useFirestore() {
               ...mainDoc,
               attendance: mainDoc.attendance,
             });
-            // บันทึก monthly docs
             for (const [ym, records] of Object.entries(byMonth)) {
               await setDoc(
                 doc(db, COLLECTION, attDocId(ym)),
@@ -141,7 +203,6 @@ export default function useFirestore() {
               );
               attCacheRef.current[ym] = records;
             }
-            // อัปเดต main_data โดยไม่มี attendance array
             await setDoc(mainRef, sanitize(newMain));
             mainDoc = newMain;
             console.log("✅ Migration complete");
@@ -155,8 +216,8 @@ export default function useFirestore() {
         }
 
         // โหลด monthly attendance docs ที่ยังไม่อยู่ใน cache
-        const months   = mainDoc.attendanceMonths || [];
-        const toFetch  = months.filter(ym => !(ym in attCacheRef.current));
+        const months  = mainDoc.attendanceMonths || [];
+        const toFetch = months.filter(ym => !(ym in attCacheRef.current));
         for (const ym of toFetch) {
           try {
             const attSnap = await getDoc(doc(db, COLLECTION, attDocId(ym)));
@@ -170,7 +231,18 @@ export default function useFirestore() {
         }
 
         if (mounted) {
-          setData(mergeData(mainDoc, attCacheRef.current));
+          const merged = mergeData(mainDoc, attCacheRef.current);
+
+          // ── ตรวจว่า Firebase data ว่างเปล่าแต่มี backup ────────────────────
+          if (isEmptyDoc(mainDoc)) {
+            const backup = loadLocalBackup();
+            if (backup?.data?.students?.length > 0) {
+              console.warn("⚠️ Firebase has empty data but backup has students — showing alert");
+              setBackupAlert({ ts: backup.ts, studentCount: backup.data.students.length });
+            }
+          }
+
+          setData(merged);
           setLoading(false);
         }
       },
@@ -185,9 +257,20 @@ export default function useFirestore() {
     return () => { mounted = false; clearTimeout(timeoutId); unsubscribe(); };
   }, []);
 
-  // ─── Auto-save (debounced 500 ms) ──────────────────────────────────────────
+  // ─── Auto-save (debounced 800 ms) ──────────────────────────────────────────
   useEffect(() => {
     if (!data || !db || !dirtyRef.current) return;
+
+    // ป้องกัน: ไม่ save ถ้า students หายหมดแล้วมี backup อยู่
+    // (แสดงว่ามีบางอย่างผิดปกติ)
+    if (data.students?.length === 0) {
+      const backup = loadLocalBackup();
+      if (backup?.data?.students?.length > 0) {
+        console.warn("⚠️ Save blocked: students is empty but backup exists");
+        setSaveStatus('error');
+        return;
+      }
+    }
 
     setSaveStatus('saving');
     const mainRef = doc(db, COLLECTION, MAIN_DOC);
@@ -196,10 +279,8 @@ export default function useFirestore() {
       try {
         const { mainDoc, byMonth } = splitData(data);
 
-        // บันทึก main doc
         await setDoc(mainRef, sanitize(mainDoc));
 
-        // บันทึกเฉพาะ monthly docs ที่เปลี่ยนแปลง
         for (const [ym, records] of Object.entries(byMonth)) {
           const cached  = JSON.stringify(attCacheRef.current[ym] || []);
           const current = JSON.stringify(records);
@@ -214,12 +295,16 @@ export default function useFirestore() {
 
         dirtyRef.current = false;
         setSaveStatus('saved');
-        console.log("✅ Saved to Firebase");
+
+        // ── บันทึก backup ลง localStorage หลัง save สำเร็จ ────────────────
+        saveLocalBackup(data);
+
+        console.log("✅ Saved to Firebase + backup updated");
       } catch (err) {
         console.error("❌ Firebase save error:", err);
         setSaveStatus('error');
       }
-    }, 500);
+    }, 800);
 
     return () => clearTimeout(timer);
   }, [data]);
@@ -230,14 +315,29 @@ export default function useFirestore() {
     setData(prev => (prev ? fn(prev) : prev));
   }, []);
 
-  // ─── systemActions (for SettingsPage / IOPage) ─────────────────────────────
+  // ─── restoreFromBackup ─────────────────────────────────────────────────────
+  const restoreFromBackup = useCallback(() => {
+    const backup = loadLocalBackup();
+    if (!backup?.data) return false;
+    attCacheRef.current = {};
+    // backup ไม่มี attendance — เติมเป็น array ว่าง
+    const restored = { ...backup.data, attendance: [] };
+    dirtyRef.current = true;
+    setData(restored);
+    setBackupAlert(null);
+    console.log("✅ Restored from local backup");
+    return true;
+  }, []);
+
+  // ─── systemActions ─────────────────────────────────────────────────────────
   const systemActions = {
     exportJSON: () => data ? JSON.stringify(data, null, 2) : '{}',
     importJSON: (json) => {
       try {
         const parsed = JSON.parse(json);
-        if (typeof parsed !== 'object') return false;
-        // reset attendance cache ด้วยเพราะข้อมูลใหม่อาจมี attendance ที่ต่างออกไป
+        if (typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+        // validation: ต้องมี field หลักครบ
+        if (!Array.isArray(parsed.students)) return false;
         attCacheRef.current = {};
         update(() => parsed);
         return true;
@@ -249,5 +349,5 @@ export default function useFirestore() {
     },
   };
 
-  return { data, loading, error, update, systemActions, saveStatus };
+  return { data, loading, error, update, systemActions, saveStatus, backupAlert, restoreFromBackup };
 }

@@ -128,22 +128,25 @@ export default function CalendarPage({ data, update, role, toast }) {
   const events    = data.calendar || [];
   const thaiYear  = year + 543;
 
-  // events keyed by ISO date
+  // events keyed by ISO date — ใช้ string เพื่อหลีกเลี่ยง timezone bug ทั้งหมด
   const evByDate  = useMemo(() => {
     const m = {};
+
+    // วน ISO date string โดยไม่สร้าง Date object เลย
+    const nextDay = (iso) => {
+      const [y, mo, d] = iso.split('-').map(Number);
+      const tmp = new Date(y, mo - 1, d + 1); // local constructor — ไม่มี timezone shift
+      return toISO(tmp.getFullYear(), tmp.getMonth(), tmp.getDate());
+    };
+
     events.forEach(ev => {
-      // support date range (endDate)
       const start = ev.date;
       const end   = ev.endDate && ev.endDate >= start ? ev.endDate : start;
-      // iterate days in range
-      let cur = new Date(start + 'T00:00:00');
-      const stop = new Date(end + 'T00:00:00');
-      while (cur <= stop) {
-        // ใช้ local date components — ไม่ใช้ toISOString() เพราะแปลงเป็น UTC แล้วเลื่อนวัน
-        const key = toISO(cur.getFullYear(), cur.getMonth(), cur.getDate());
-        if (!m[key]) m[key] = [];
-        m[key].push(ev);
-        cur.setDate(cur.getDate() + 1);
+      let cur = start;
+      while (cur <= end) {
+        if (!m[cur]) m[cur] = [];
+        m[cur].push(ev);
+        cur = nextDay(cur);
       }
     });
     return m;
