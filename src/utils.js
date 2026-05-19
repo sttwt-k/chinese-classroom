@@ -111,6 +111,7 @@ export const dateInRange = (ds, range) => {
 export const creditToHours = c => c * 2;
 
 // ===== IMAGE COMPRESSION =====
+// เดิม: คืน base64 string (ใช้กับที่เก่า ถ้ายังมี)
 export const compressImg = (file, maxPx = 800, q = 0.75) => new Promise(res => {
   const r = new FileReader();
   r.onload = e => {
@@ -126,3 +127,25 @@ export const compressImg = (file, maxPx = 800, q = 0.75) => new Promise(res => {
   };
   r.readAsDataURL(file);
 });
+
+// ใหม่: คืน Blob สำหรับ upload ขึ้น Firebase Storage (ไม่เก็บ base64 ใน Firestore)
+export const compressImgToBlob = (file, maxPx = 800, q = 0.75) => new Promise((res, rej) => {
+  const r = new FileReader();
+  r.onload = e => {
+    const img = new Image();
+    img.onload = () => {
+      const ratio = Math.min(1, maxPx / img.width, maxPx / img.height);
+      const cv = document.createElement('canvas');
+      cv.width  = img.width  * ratio;
+      cv.height = img.height * ratio;
+      cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+      cv.toBlob(blob => blob ? res(blob) : rej(new Error('toBlob failed')), 'image/jpeg', q);
+    };
+    img.src = e.target.result;
+  };
+  r.onerror = rej;
+  r.readAsDataURL(file);
+});
+
+// ตรวจว่า string นี้เป็น Firebase Storage URL หรือ base64 เก่า
+export const isStorageUrl = str => typeof str === 'string' && str.startsWith('https://firebasestorage');
