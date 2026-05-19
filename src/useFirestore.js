@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { doc, setDoc, getDoc, onSnapshot } from "firebase/firestore";
-import { db } from "./firebase";
+import { db, authReady } from "./firebase";
 
 // ─── Document layout ─────────────────────────────────────────────────────────
 //  app_data/main_data          ← students, subjects, scores, settings, timetable…
@@ -122,13 +122,28 @@ export default function useFirestore() {
 
     const mainRef   = doc(db, COLLECTION, MAIN_DOC);
     let   mounted   = true;
+    let   unsubscribe = () => {};
 
     const timeoutId = setTimeout(() => {
       setError("การเชื่อมต่อใช้เวลานานผิดปกติ กรุณาตรวจสอบอินเทอร์เน็ตหรือ Firebase Rules");
       setLoading(false);
     }, 10000);
 
-    const unsubscribe = onSnapshot(
+    // รอ anonymous auth สำเร็จก่อน แล้วค่อยเริ่ม Firestore listener
+    // ป้องกัน permission-denied ก่อน token พร้อม
+    authReady.then((user) => {
+      if (!mounted) return;
+      if (!user) {
+        clearTimeout(timeoutId);
+        setError("ไม่สามารถยืนยันตัวตนกับ Firebase ได้ กรุณา Enable Anonymous Auth ใน Firebase Console");
+        setLoading(false);
+        return;
+      }
+      startListener();
+    });
+
+    const startListener = () => {
+    unsubscribe = onSnapshot(
       mainRef,
       async (snap) => {
         clearTimeout(timeoutId);
@@ -253,6 +268,7 @@ export default function useFirestore() {
         setLoading(false);
       }
     );
+    }; // end startListener
 
     return () => { mounted = false; clearTimeout(timeoutId); unsubscribe(); };
   }, []);
