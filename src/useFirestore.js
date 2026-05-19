@@ -250,10 +250,26 @@ export default function useFirestore() {
 
           // ── ตรวจว่า Firebase data ว่างเปล่าแต่มี backup ────────────────────
           if (isEmptyDoc(mainDoc)) {
-            const backup = loadLocalBackup();
-            if (backup?.data?.students?.length > 0) {
-              console.warn("⚠️ Firebase has empty data but backup has students — showing alert");
-              setBackupAlert({ ts: backup.ts, studentCount: backup.data.students.length });
+            // ลำดับ 1: ตรวจ localStorage
+            const localBackup = loadLocalBackup();
+            if (localBackup?.data?.students?.length > 0) {
+              console.warn("⚠️ Firebase has empty data but localStorage backup has students — showing alert");
+              setBackupAlert({ ts: localBackup.ts, studentCount: localBackup.data.students.length, source: 'local' });
+            } else {
+              // ลำดับ 2: ตรวจ Firestore backup_latest
+              try {
+                const fbBackupSnap = await getDoc(doc(db, COLLECTION, 'backup_latest'));
+                if (fbBackupSnap.exists()) {
+                  const fbBackup = fbBackupSnap.data();
+                  if (fbBackup._studentCount > 0) {
+                    console.warn("⚠️ Firebase has empty data but backup_latest has students — showing alert");
+                    const backupTs = fbBackup._backupAt ? new Date(fbBackup._backupAt).getTime() : Date.now();
+                    setBackupAlert({ ts: backupTs, studentCount: fbBackup._studentCount, source: 'firestore' });
+                  }
+                }
+              } catch (e) {
+                console.warn("Could not check backup_latest:", e.message);
+              }
             }
           }
 
@@ -315,7 +331,23 @@ export default function useFirestore() {
         // ── บันทึก backup ลง localStorage หลัง save สำเร็จ ────────────────
         saveLocalBackup(data);
 
-        console.log("✅ Saved to Firebase + backup updated");
+        // ── บันทึก backup ลง Firestore (app_data/backup_latest) ─────────────
+        // ต่างจาก main_data ตรงที่ไม่มี attendanceMonths — เป็น snapshot ล้วนๆ
+        // protected โดย rule เดียวกัน (delete: false) → กู้คืนได้แม้ main_data หาย
+        try {
+          const backupRef = doc(db, COLLECTION, 'backup_latest');
+          const { mainDoc: backupDoc } = splitData(data);
+          await setDoc(backupRef, sanitize({
+            ...backupDoc,
+            _backupAt: new Date().toISOString(),
+            _studentCount: data.students?.length || 0,
+          }));
+        } catch (backupErr) {
+          // backup ล้มเหลวไม่ให้ขัดการทำงานหลัก
+          console.warn("⚠️ Firestore backup failed (non-critical):", backupErr.message);
+        }
+
+        console.log("✅ Saved to Firebase + localStorage + Firestore backup");
       } catch (err) {
         console.error("❌ Firebase save error:", err);
         setSaveStatus('error');
@@ -331,17 +363,37 @@ export default function useFirestore() {
     setData(prev => (prev ? fn(prev) : prev));
   }, []);
 
-  // ─── restoreFromBackup ─────────────────────────────────────────────────────
-  const restoreFromBackup = useCallback(() => {
+  // ─── restoreFromBackup (localStorage หรือ Firestore backup_latest) ──────────
+  const restoreFromBackup = useCallback(async (source = 'local') => {
+    if (source === 'firestore') {
+      // ดึงจาก Firestore backup_latest
+      try {
+        const fbSnap = await getDoc(doc(db, COLLECTION, 'backup_latest'));
+        if (!fbSnap.exists()) return false;
+        const fbData = fbSnap.data();
+        // ลบ meta fields
+        const { _backupAt, _studentCount, ...restoredMain } = fbData;
+        attCacheRef.current = {};
+        dirtyRef.current = true;
+        setData({ ...restoredMain, attendance: [] });
+        setBackupAlert(null);
+        console.log("✅ Restored from Firestore backup_latest");
+        return true;
+      } catch (e) {
+        console.error("Restore from Firestore backup failed:", e);
+        return false;
+      }
+    }
+
+    // default: localStorage
     const backup = loadLocalBackup();
     if (!backup?.data) return false;
     attCacheRef.current = {};
-    // backup ไม่มี attendance — เติมเป็น array ว่าง
     const restored = { ...backup.data, attendance: [] };
     dirtyRef.current = true;
     setData(restored);
     setBackupAlert(null);
-    console.log("✅ Restored from local backup");
+    console.log("✅ Restored from localStorage backup");
     return true;
   }, []);
 

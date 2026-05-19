@@ -27,9 +27,15 @@ function BackupAlertModal({ alert, onRestore, onDismiss }) {
           พบข้อมูลสำรองในเครื่อง
         </div>
         <div style={{ fontSize: 14, color: '#374151', lineHeight: 1.6, marginBottom: 20, textAlign: 'center' }}>
-          Firebase มีข้อมูลว่างเปล่า แต่พบข้อมูลสำรองในเครื่องนี้
-          ที่บันทึกไว้เมื่อ <strong>{fmt}</strong>
+          Firebase มีข้อมูลว่างเปล่า แต่พบข้อมูลสำรอง
+          {alert.source === 'firestore' ? ' ใน Firebase Backup' : ' ในเครื่องนี้'}
+          {' '}ที่บันทึกไว้เมื่อ <strong>{fmt}</strong>
           <br/>มีข้อมูลนักเรียน <strong>{alert.studentCount} คน</strong>
+          {alert.source === 'firestore' && (
+            <div style={{ marginTop: 6, fontSize: 12, color: '#16A34A', fontWeight: 600 }}>
+              🛡️ สำรองจาก Firebase โดยตรง — ปลอดภัยที่สุด
+            </div>
+          )}
         </div>
         <button
           onClick={onRestore}
@@ -88,7 +94,8 @@ export default function AppRouter() {
   }, []);
 
   const handleRestore = () => {
-    restoreFromBackup();
+    const source = backupAlert?.source || 'local';
+    restoreFromBackup(source);
     setAlertDismissed(false);
   };
   const handleDismissAlert = () => {
