@@ -194,4 +194,40 @@ export default function ThaiAddressSelect({
           style={{
             padding: '6px 16px', background: '#F59E0B', color: '#fff',
             border: 'none', borderRadius: 8, fontSize: 13, fontWeight: 700,
-            cursor: 'pointer', fontFamily:
+            cursor: 'pointer', fontFamily: 'inherit',
+          }}
+        >🔄 ลองโหลดใหม่</button>
+      </div>
+      <ManualFallback
+        province={province} district={district}
+        subDistrict={subDistrict} postalCode={postalCode}
+        onChange={onChange}
+      />
+    </>
+  );
+
+  return (
+    <>
+      <Sel label="จังหวัด" value={province} onChange={handleProv} options={provOpts} placeholder="-- เลือกจังหวัด --"/>
+      <Sel
+        label="อำเภอ/เขต" value={district} onChange={handleDist} options={ampOpts}
+        placeholder={province ? '-- เลือกอำเภอ --' : '-- เลือกจังหวัดก่อน --'}
+        disabled={!province || !provId}
+      />
+      <Sel
+        label="ตำบล/แขวง" value={subDistrict} onChange={handleTab} options={tabOpts}
+        placeholder={district ? '-- เลือกตำบล --' : '-- เลือกอำเภอก่อน --'}
+        disabled={!district || !ampId}
+      />
+      <div style={{ marginBottom: 12 }}>
+        <label style={sLabel}>รหัสไปรษณีย์</label>
+        <input
+          value={postalCode || ''}
+          onChange={e => onChange({ province, district, subDistrict, postalCode: e.target.value })}
+          style={{ ...sInp, maxWidth: 140 }}
+          placeholder="กรอกอัตโนมัติ"
+        />
+      </div>
+    </>
+  );
+}
