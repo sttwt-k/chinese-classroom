@@ -119,37 +119,4 @@ export default function TeacherApp({ data, update, systemActions, saveStatus, on
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
           <button
             onClick={() => { setFabOpen(false); openAtt('morning', data.homeroom); }}
-            style={{ padding: '16px 20px', background: 'linear-gradient(135deg,#0284C7,#0369A1)', color: 'white', border: 'none', borderRadius: 16, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', boxShadow: '0 4px 12px rgba(2,132,199,0.2)' }}
-          >
-            <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 4 }}>🌅 เช็คชื่อเข้าแถว</div>
-            <div style={{ fontSize: 13, opacity: 0.85 }}>{data.homeroom}</div>
-          </button>
-
-          <button
-            onClick={() => { setFabOpen(false); openAtt('class'); }}
-            style={{ padding: '16px 20px', background: `linear-gradient(135deg,${C.red},${C.dark})`, color: 'white', border: 'none', borderRadius: 16, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', boxShadow: '0 4px 12px rgba(229,57,53,0.2)' }}
-          >
-            <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 4 }}>📚 ตารางสอน / เช็คชื่อคาบ</div>
-            <div style={{ fontSize: 13, opacity: 0.85 }}>เปิดตารางเพื่อเช็คชื่อ</div>
-          </button>
-
-          <button
-            onClick={() => { setFabOpen(false); setPage('score'); }}
-            style={{ padding: '16px 20px', background: 'linear-gradient(135deg,#D97706,#B45309)', color: 'white', border: 'none', borderRadius: 16, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit', boxShadow: '0 4px 12px rgba(217,119,6,0.2)' }}
-          >
-            <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 4 }}>📊 บันทึกคะแนน</div>
-          </button>
-
-          <button
-            onClick={() => { setFabOpen(false); setPage('stu'); }}
-            style={{ padding: '16px 20px', background: C.card, color: C.text, border: `1.5px solid ${C.border}`, borderRadius: 16, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}
-          >
-            <div style={{ fontWeight: 700, fontSize: 16 }}>👤 จัดการนักเรียน</div>
-          </button>
-        </div>
-      </Sheet>
-
-      <Toast msg={toastMsg.msg} type={toastMsg.type} onClose={() => setToastMsg({ msg: '', type: 'info' })}/>
-    </div>
-  );
-}
+            style={{ padding: '16px 20px', background: 'linear-gradient(135deg,#0284C7,#0369A1)', color: 'white', bord

@@ -1,10 +1,8 @@
 import React, { useState, useRef } from 'react';
 import { C, BLOOD_TYPES, RELIGIONS, MARITAL } from '../constants';
 import { sCard, sBtn, sInp, sTab, sLabel } from '../styles';
-import { fmtDate, todayStr, compressImgToBlob, isStorageUrl } from '../utils';
+import { fmtDate, todayStr, compressImg } from '../utils';
 import { emptyProfile, emptyGoal, profileCompletion, calcSavings } from '../models';
-import { ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
-import { storage } from '../firebase';
 import { FormInp, FormSel, Row2, Row4 } from '../components/FormInputs';
 import Sheet from '../components/Sheet';
 import ThaiAddressSelect from '../components/ThaiAddressSelect';
@@ -31,50 +29,35 @@ function ProfileForm({ student, profile, onSave, onBack, toast }) {
     setForm(p => ({ ...p, birthday: v, age }));
   };
 
-  // ── อัปโหลดรูปโปรไฟล์ → Firebase Storage ──────────────────────────────────
-  // เก็บแค่ URL สั้นๆ (~200 chars) ใน Firestore แทน base64 (~100KB)
+  // ── รูปโปรไฟล์ → บีบอัดเป็น base64 เก็บใน Firestore โดยตรง ──────────────────
   const handleProfilePhoto = async e => {
     const file = e.target.files[0]; if (!file) return;
-    toast('กำลังอัปโหลดรูป...', 'info');
+    toast('กำลังประมวลผลรูป...', 'info');
     try {
-      const blob     = await compressImgToBlob(file, 600, 0.8);
-      const path     = `profiles/${student.id}/profile.jpg`;
-      const stRef    = ref(storage, path);
-      await uploadBytes(stRef, blob, { contentType: 'image/jpeg' });
-      const url      = await getDownloadURL(stRef);
-      set('profilePhoto', url);
-      toast('อัปโหลดรูปสำเร็จ ✓', 'success');
+      const b64 = await compressImg(file, 500, 0.75); // ≈20-40 KB
+      set('profilePhoto', b64);
+      toast('เพิ่มรูปสำเร็จ ✓', 'success');
     } catch (err) {
-      console.error('uploadProfilePhoto:', err);
-      toast('อัปโหลดรูปไม่สำเร็จ', 'error');
+      console.error('compressProfilePhoto:', err);
+      toast('ประมวลผลรูปไม่สำเร็จ', 'error');
     }
     e.target.value = '';
   };
 
-  // ── ลบรูปโปรไฟล์ (ลบจาก Storage ด้วยถ้าเป็น URL) ──────────────────────────
-  const deleteProfilePhoto = async () => {
-    if (isStorageUrl(form.profilePhoto)) {
-      try { await deleteObject(ref(storage, `profiles/${student.id}/profile.jpg`)); } catch {}
-    }
-    set('profilePhoto', '');
-  };
+  const deleteProfilePhoto = () => set('profilePhoto', '');
 
-  // ── อัปโหลดรูปบ้าน → Firebase Storage ─────────────────────────────────────
+  // ── รูปบ้าน → บีบอัดเป็น base64 เก็บใน Firestore โดยตรง ───────────────────
   const handleHomePhoto = async e => {
     const file = e.target.files[0]; if (!file) return;
     if ((form.homePhotos || []).length >= 5) return toast('รูปบ้านสูงสุด 5 รูป', 'error');
-    toast('กำลังอัปโหลดรูป...', 'info');
+    toast('กำลังประมวลผลรูป...', 'info');
     try {
-      const blob  = await compressImgToBlob(file, 900, 0.75);
-      const fname = `home_${Date.now()}.jpg`;
-      const stRef = ref(storage, `profiles/${student.id}/${fname}`);
-      await uploadBytes(stRef, blob, { contentType: 'image/jpeg' });
-      const url   = await getDownloadURL(stRef);
-      setForm(p => ({ ...p, homePhotos: [...(p.homePhotos || []), url] }));
+      const b64 = await compressImg(file, 800, 0.7); // ≈40-80 KB
+      setForm(p => ({ ...p, homePhotos: [...(p.homePhotos || []), b64] }));
       toast('เพิ่มรูปสำเร็จ ✓', 'success');
     } catch (err) {
-      console.error('uploadHomePhoto:', err);
-      toast('อัปโหลดรูปไม่สำเร็จ', 'error');
+      console.error('compressHomePhoto:', err);
+      toast('ประมวลผลรูปไม่สำเร็จ', 'error');
     }
     e.target.value = '';
   };
