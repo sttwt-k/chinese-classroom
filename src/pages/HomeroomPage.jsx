@@ -10,7 +10,7 @@ import ThaiAddressSelect from '../components/ThaiAddressSelect';
 // ─────────────────────────────────────────────
 // ProfileForm
 // ─────────────────────────────────────────────
-function ProfileForm({ student, profile, onSave, onBack, toast }) {
+function ProfileForm({ student, profile, onSave, onBack, toast, saving = false }) {
   const [form, setForm] = useState({ ...emptyProfile(), ...profile });
   const [sec,  setSec]  = useState(0);
   const profileRef      = useRef(null);
@@ -73,7 +73,7 @@ function ProfileForm({ student, profile, onSave, onBack, toast }) {
           <div style={{ fontWeight: 600, fontSize: 14, color: C.text }}>{student.name}</div>
           <div style={{ fontSize: 11, color: C.muted }}>ข้อมูลครบ {completion}%</div>
         </div>
-        <button onClick={() => onSave(form)} style={sBtn(true, true)}>💾 บันทึก</button>
+        <button onClick={() => onSave(form)} style={{ ...sBtn(true, true), opacity: saving ? 0.6 : 1 }} disabled={saving}>{saving ? '⏳ กำลังบันทึก…' : '💾 บันทึก'}</button>
       </div>
 
       <div style={{ display: 'flex', gap: 4, overflowX: 'auto', paddingBottom: 4, marginBottom: 12 }}>
@@ -252,7 +252,7 @@ function ProfileForm({ student, profile, onSave, onBack, toast }) {
 
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={onBack} style={{ ...sBtn(false), flex: 1 }}>ยกเลิก</button>
-            <button onClick={() => onSave(form)} style={{ ...sBtn(true), flex: 1 }}>💾 บันทึกทั้งหมด</button>
+            <button onClick={() => onSave(form)} style={{ ...sBtn(true), flex: 1, opacity: saving ? 0.6 : 1 }} disabled={saving}>{saving ? '⏳ กำลังบันทึก…' : '💾 บันทึกทั้งหมด'}</button>
           </div>
         </div>
       )}
@@ -361,21 +361,29 @@ function ProfileView({ student, profile, onEdit, onBack }) {
 // ─────────────────────────────────────────────
 // ProfileSection
 // ─────────────────────────────────────────────
-function ProfileSection({ data, update, role, hStu, myStudentId, toast }) {
+function ProfileSection({ data, update, saveProfileDirect, role, hStu, myStudentId, toast }) {
   const [viewId,  setViewId]  = useState(role === 'student' ? myStudentId : null);
   const [editing, setEditing] = useState(false);
+  const [saving,  setSaving]  = useState(false);
 
   const targetId = viewId;
   const profile  = targetId ? (data.profiles?.[targetId] || emptyProfile()) : null;
   const student  = targetId ? data.students.find(s => s.id === targetId) : null;
 
-  const saveProfile = newProfile => {
-    update(prev => ({
-      ...prev,
-      profiles: { ...(prev.profiles || {}), [targetId]: { ...newProfile, updatedAt: new Date().toISOString() } },
-    }));
-    toast('บันทึกประวัติแล้ว', 'success');
-    setEditing(false);
+  // บันทึก profile ตรงไปยัง Firestore (profile doc แยก) เพื่อไม่ให้ main_data เกิน 1 MB
+  const saveProfile = async newProfile => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      await saveProfileDirect(targetId, newProfile);
+      toast('บันทึกประวัติแล้ว ✓', 'success');
+      setEditing(false);
+    } catch (err) {
+      console.error('saveProfile failed:', err);
+      toast('บันทึกไม่สำเร็จ: ' + err.message, 'error');
+    } finally {
+      setSaving(false);
+    }
   };
 
   // Teacher – show student list
@@ -425,7 +433,7 @@ function ProfileSection({ data, update, role, hStu, myStudentId, toast }) {
         key={student.id}
         student={student} profile={profile} onSave={saveProfile}
         onBack={() => { setEditing(false); if (role === 'teacher') setViewId(null); }}
-        toast={toast}
+        toast={toast} saving={saving}
       />
     );
   }
@@ -727,7 +735,7 @@ function SavingsSection({ data, update, role, hStu, myStudentId, toast }) {
 // ─────────────────────────────────────────────
 // HomeroomPage (default export)
 // ─────────────────────────────────────────────
-export default function HomeroomPage({ data, update, role, currentStudentId, toast }) {
+export default function HomeroomPage({ data, update, role, currentStudentId, toast, saveProfileDirect }) {
   const [sub, setSub] = useState('profile');
 
   const hStu = (data.students || [])
@@ -747,7 +755,7 @@ export default function HomeroomPage({ data, update, role, currentStudentId, toa
       </div>
 
       {sub === 'profile' && (
-        <ProfileSection data={data} update={update} role={role} hStu={hStu} myStudentId={currentStudentId} toast={toast}/>
+        <ProfileSection data={data} update={update} saveProfileDirect={saveProfileDirect} role={role} hStu={hStu} myStudentId={currentStudentId} toast={toast}/>
       )}
       {sub === 'savings' && (
         <SavingsSection data={data} update={update} role={role} hStu={hStu} myStudentId={currentStudentId} toast={toast}/>

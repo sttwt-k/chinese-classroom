@@ -26,7 +26,7 @@ function needsBackupReminder() {
   return days >= 7;
 }
 
-export default function TeacherApp({ data, update, systemActions, saveStatus, onLogout }) {
+export default function TeacherApp({ data, update, systemActions, saveStatus, onLogout, saveProfileDirect }) {
   const [page,       setPage]       = useState('home');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [fabOpen,    setFabOpen]    = useState(false);
@@ -95,7 +95,7 @@ export default function TeacherApp({ data, update, systemActions, saveStatus, on
       {page === 'stu'      && <StudentsPage  data={data} update={update} toast={toast}/>}
       {page === 'stat'     && <StatsPage     data={data}/>}
       {page === 'io'       && <IOPage        data={data} update={update} toast={toast}/>}
-      {page === 'homeroom' && <HomeroomPage   data={data} update={update} role="teacher" currentStudentId={null} toast={toast}/>}
+      {page === 'homeroom' && <HomeroomPage   data={data} update={update} role="teacher" currentStudentId={null} toast={toast} saveProfileDirect={saveProfileDirect}/>}
       {page === 'cal'      && <CalendarPage   data={data} update={update} role="teacher" toast={toast}/>}
       {page === 'report'   && <ReportCardPage data={data}/>}
       {page === 'set'      && <SettingsPage   data={data} update={update} systemActions={systemActions} toast={toast}/>}

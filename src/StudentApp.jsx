@@ -6,7 +6,7 @@ import Sheet        from './components/Sheet';
 import HomeroomPage  from './pages/HomeroomPage';
 import CalendarPage  from './pages/CalendarPage';
 
-export default function StudentApp({ data, update, student, onLogout }) {
+export default function StudentApp({ data, update, student, onLogout, saveProfileDirect }) {
   const [tab,      setTab]      = useState('scores');
   const [pinModal, setPinModal] = useState(false);
   const [pf,       setPf]       = useState({ cur: '', n1: '', n2: '' });
@@ -209,7 +209,7 @@ export default function StudentApp({ data, update, student, onLogout }) {
 
         {/* ── Homeroom tab ── */}
         {tab === 'homeroom' && isHomeroom && (
-          <HomeroomPage data={data} update={update} role="student" currentStudentId={student.id} toast={msg => alert(msg)}/>
+          <HomeroomPage data={data} update={update} role="student" currentStudentId={student.id} toast={msg => alert(msg)} saveProfileDirect={saveProfileDirect}/>
         )}
       </div>
 

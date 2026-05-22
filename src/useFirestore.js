@@ -18,6 +18,9 @@ const toYM = (date) => (date ? date.substring(0, 7) : null);
 // Attendance doc ID: "att_2569-05"
 const attDocId = (ym) => `att_${ym}`;
 
+// Profile doc ID: "profile_STU001"  (separate doc per student — avoids 1 MB main_data limit)
+const profileDocId = (id) => `profile_${id}`;
+
 const initData = () => ({
   appName: 'ห้องเรียนของคุณครูต้นฝน',
   teacherUsername: 'puntoy',
@@ -77,9 +80,10 @@ const sanitize = v => {
   return out;
 };
 
-// แยก data เป็น main doc (ไม่มี attendance) + monthly attendance maps
+// แยก data เป็น main doc (ไม่มี attendance และ profiles) + monthly attendance maps
+// profiles ถูกแยกออกไปเก็บใน profile_{id} docs แทน เพื่อไม่ให้ main_data เกิน 1 MB
 const splitData = (fullData) => {
-  const { attendance, attendanceMonths: _ignored, ...mainFields } = fullData;
+  const { attendance, attendanceMonths: _ignored, profiles: _profiles, ...mainFields } = fullData;
   const byMonth = {};
   (attendance || []).forEach(rec => {
     const ym = toYM(rec.date);
@@ -245,8 +249,40 @@ export default function useFirestore() {
           }
         }
 
+        // ── โหลด profiles จาก separate docs (หรือ migrate จาก main_data) ────────
+        const studentIds = (mainDoc.students || []).map(s => s.id);
+        const profilesMap = {};
+
+        if (studentIds.length > 0) {
+          if (mainDoc.profiles && Object.keys(mainDoc.profiles).length > 0) {
+            // MIGRATION: main_data มี profiles เก่าฝังอยู่ → ย้ายไป separate docs
+            console.log('🔄 Migrating', Object.keys(mainDoc.profiles).length, 'profiles to separate docs…');
+            for (const [id, profile] of Object.entries(mainDoc.profiles)) {
+              profilesMap[id] = profile;
+              try {
+                await setDoc(doc(db, COLLECTION, profileDocId(id)), sanitize(profile));
+              } catch (e) { console.warn('Profile migration failed for', id, e); }
+            }
+            // ลบ profiles ออกจาก main_data เพื่อลดขนาด doc
+            try {
+              const { profiles: _, ...cleanMain } = mainDoc;
+              await setDoc(mainRef, sanitize(cleanMain));
+              console.log('✅ Profiles migrated & removed from main_data');
+            } catch (e) { console.warn('Could not remove profiles from main_data:', e); }
+          } else {
+            // โหลด profiles จาก separate docs แบบขนาน
+            await Promise.all(studentIds.map(async id => {
+              try {
+                const snap = await getDoc(doc(db, COLLECTION, profileDocId(id)));
+                if (snap.exists()) profilesMap[id] = snap.data();
+              } catch (e) { console.warn('Could not load profile', id, e); }
+            }));
+          }
+        }
+
         if (mounted) {
           const merged = mergeData(mainDoc, attCacheRef.current);
+          merged.profiles = profilesMap; // inject profiles from separate docs
 
           // ── ตรวจว่า Firebase data ว่างเปล่าแต่มี backup ────────────────────
           if (isEmptyDoc(mainDoc)) {
@@ -363,6 +399,22 @@ export default function useFirestore() {
     setData(prev => (prev ? fn(prev) : prev));
   }, []);
 
+  // ─── saveProfileDirect ─────────────────────────────────────────────────────
+  // บันทึก profile นักเรียนตรงไปยัง Firestore (profile_{id} doc) โดยไม่ผ่าน debounce
+  // ใช้ตอนกดบันทึกข้อมูลนักเรียน (ซึ่งอาจมีรูปภาพ base64 ขนาดใหญ่)
+  const saveProfileDirect = useCallback(async (studentId, profileData) => {
+    if (!db) throw new Error('Firebase db not ready');
+    const profileRef = doc(db, COLLECTION, profileDocId(studentId));
+    const withTs = { ...profileData, updatedAt: new Date().toISOString() };
+    await setDoc(profileRef, sanitize(withTs));
+    // อัปเดต local state ด้วย
+    setData(prev => prev ? {
+      ...prev,
+      profiles: { ...(prev.profiles || {}), [studentId]: withTs },
+    } : prev);
+    console.log('✅ Profile saved directly:', studentId);
+  }, []);
+
   // ─── restoreFromBackup (localStorage หรือ Firestore backup_latest) ──────────
   const restoreFromBackup = useCallback(async (source = 'local') => {
     if (source === 'firestore') {
@@ -408,6 +460,15 @@ export default function useFirestore() {
         if (!Array.isArray(parsed.students)) return false;
         attCacheRef.current = {};
         update(() => parsed);
+        // บันทึก profiles ที่นำเข้าไปยัง separate docs
+        if (parsed.profiles && db) {
+          for (const [id, profile] of Object.entries(parsed.profiles)) {
+            if (profile && typeof profile === 'object') {
+              setDoc(doc(db, COLLECTION, profileDocId(id)), sanitize(profile))
+                .catch(e => console.warn('Profile import save failed for', id, e));
+            }
+          }
+        }
         return true;
       } catch { return false; }
     },
@@ -417,5 +478,5 @@ export default function useFirestore() {
     },
   };
 
-  return { data, loading, error, update, systemActions, saveStatus, backupAlert, restoreFromBackup };
+  return { data, loading, error, update, systemActions, saveStatus, backupAlert, restoreFromBackup, saveProfileDirect };
 }
