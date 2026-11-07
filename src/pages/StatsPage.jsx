@@ -2,7 +2,7 @@ import React, { useState, useMemo } from 'react';
 import { C, STATUS, S_ORDER } from '../constants';
 import { sCard, sInp, sTab } from '../styles';
 import {
-  calcAttRate, calcConduct, getCatMax, getCatScore, hasCatScore,
+  getScoreSummary, calcAttRate, calcConduct,
   getSubjectGrade, getGrade, gradeColor, gradeBg, sortClasses, dateInRange,
 } from '../utils';
 
@@ -53,11 +53,8 @@ export default function StatsPage({ data }) {
 
   const scoreStats = useMemo(() => {
     const subj  = statSubj;
-    const sCats = subj ? data.categories.filter(c => c.subjectId === subj.id) : [];
     return students.map(stu => {
-      const mx    = sCats.reduce((s, c) => s + getCatMax(c), 0);
-      const tot   = sCats.reduce((s, c) => s + getCatScore(stu.id, c, data.scores, data.term, data.year), 0);
-      const has   = sCats.some(c => hasCatScore(stu.id, c, data.scores, data.term, data.year));
+      const { max: mx, total: tot, has } = getScoreSummary(stu.id, subj?.id, data);
       const grade = has && subj
         ? getSubjectGrade(stu.id, subj, data.categories, data.scores, data.term, data.year, data.attendance, data.conduct)
         : null;
