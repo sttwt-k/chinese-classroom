@@ -1,4 +1,4 @@
-import { GRADE_SCALE, STATUS, CONDUCT_DEF } from './constants';
+import { GRADE_SCALE, STATUS, CONDUCT_DEF } from './constants.js';
 
 // ===== UTILS =====
 
@@ -70,6 +70,53 @@ export const calcConduct = (sid, att, cfg = CONDUCT_DEF, subjId = null) => {
   return { score, counts, total: a.length };
 };
 
+// Attendance records without term/year are legacy records in the active dataset.
+export const conductForTerm = (att, term, year) => att.filter(a =>
+  (a.term == null || a.term === term) && (a.year == null || a.year === year));
+
+export const CONDUCT_MAX = 5;
+export const getConductPoints = (sid, att, cfg = CONDUCT_DEF, subjId) => {
+  if (!subjId) return null;
+  const result = calcConduct(sid, att, cfg, subjId);
+  const possible = result.total * cfg.presentScore;
+  if (!result.total || !Number.isFinite(possible) || possible <= 0 || !Number.isFinite(result.score)) return null;
+  return Math.round(Math.max(0, Math.min(CONDUCT_MAX, result.score / possible * CONDUCT_MAX)) * 100) / 100;
+};
+
+export const getScoreSummary = (sid, subjectId, data) => {
+  const cats = data.categories.filter(c => c.subjectId === subjectId);
+  const conductPoints = getConductPoints(sid, conductForTerm(data.attendance, data.term, data.year), data.conduct, subjectId);
+  const coursework = cats.reduce((sum, c) => sum + getCatScore(sid, c, data.scores, data.term, data.year), 0);
+  return {
+    conductPoints,
+    total: Math.round((coursework + (conductPoints ?? 0)) * 100) / 100,
+    max: cats.reduce((sum, c) => sum + getCatMax(c), 0) + CONDUCT_MAX,
+    has: conductPoints !== null || cats.some(c => hasCatScore(sid, c, data.scores, data.term, data.year)),
+  };
+};
+
+export const buildAttendanceSummary = ({ students, attendance, date, type, classId, subject, period }) => {
+  const groups = Object.fromEntries([...Object.keys(STATUS), 'unchecked'].map(key => [key, []]));
+  for (const student of students) {
+    const record = attendance.find(a => a.studentId === student.id && a.date === date && a.type === type &&
+      (type === 'morning' || (a.subjectId === subject?.id && a.period === period)));
+    const key = record && STATUS[record.status] ? record.status : 'unchecked';
+    groups[key].push(`เลขที่ ${student.number || '-'} ${student.name || student.nickname || student.id}`);
+  }
+  const lines = [
+    `สรุปเช็คชื่อ${type === 'morning' ? 'เข้าแถว' : 'ในห้องเรียน'}`,
+    `วันที่ ${fmtDate(date)} · ห้อง ${classId}`,
+    ...(type === 'class' ? [`วิชา ${[subject?.code, subject?.name].filter(Boolean).join(' ')} · คาบ ${period}`] : []),
+    `นักเรียนทั้งหมด ${students.length} คน`,
+    ...Object.entries(STATUS).map(([key, value]) => `${value.label} ${groups[key].length} คน`),
+    `ยังไม่ได้เช็ค ${groups.unchecked.length} คน`,
+  ];
+  for (const key of [...Object.keys(STATUS).filter(k => k !== 'present'), 'unchecked']) {
+    if (groups[key].length) lines.push('', `${STATUS[key]?.label || 'ยังไม่ได้เช็ค'}:`, ...groups[key]);
+  }
+  return lines.join('\n');
+};
+
 export const calcAttRate = (sid, att, type = 'class', subjId = null) => {
   const a = att.filter(x => x.studentId === sid && x.type === type && (!subjId || x.subjectId === subjId));
   if (!a.length) return null;
@@ -82,15 +129,14 @@ export const calcAttRate = (sid, att, type = 'class', subjId = null) => {
 };
 
 export const getSubjectGrade = (sid, subj, cats, scores, term, year, att, conduct) => {
+  att = conductForTerm(att, term, year);
   const rate = calcAttRate(sid, att, 'class', subj.id);
   if (rate !== null && rate < conduct.minAttPct) return { label:'มส.', gpa:0, special:true, color:'#dc2626' };
   const sc = cats.filter(c => c.subjectId === subj.id);
   if (sc.some(c => hasIncomplete(sid, c, scores, term, year) && hasCatScore(sid, c, scores, term, year)))
     return { label:'ร', gpa:0, special:true, color:'#d97706' };
-  const tot = sc.reduce((s, c) => s + getCatScore(sid, c, scores, term, year), 0);
-  const mx  = sc.reduce((s, c) => s + getCatMax(c), 0);
-  if (!sc.some(c => hasCatScore(sid, c, scores, term, year))) return null;
-  return getGrade(tot, mx);
+  const summary = getScoreSummary(sid, subj.id, { categories: cats, scores, term, year, attendance: att, conduct });
+  return summary.has ? getGrade(summary.total, summary.max) : null;
 };
 
 export const sortClasses = cls => [...cls].sort((a, b) => {

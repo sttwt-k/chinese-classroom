@@ -1,7 +1,7 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { C, STATUS, S_ORDER } from './constants';
 import { sCard, sBtn, sInp } from './styles';
-import { fmtDate, calcAttRate, calcConduct, getCatMax, getCatScore, hasCatScore, getSubjectGrade, getGrade, gradeColor, gradeBg } from './utils';
+import { getScoreSummary, fmtDate, calcAttRate, calcConduct, getCatMax, getCatScore, hasCatScore, getSubjectGrade, getGrade, gradeColor, gradeBg } from './utils';
 import Sheet        from './components/Sheet';
 import HomeroomPage  from './pages/HomeroomPage';
 import CalendarPage  from './pages/CalendarPage';
@@ -33,9 +33,7 @@ export default function StudentApp({ data, update, student, onLogout, saveProfil
   const isHomeroom = student.classId === data.homeroom;
   const subj       = enrolledSubjects.find(s => s.id === selSubjId);
   const cats       = subj ? data.categories.filter(c => c.subjectId === subj.id) : [];
-  const mx         = cats.reduce((s, c) => s + getCatMax(c), 0);
-  const tot        = cats.reduce((s, c) => s + getCatScore(student.id, c, data.scores, data.term, data.year), 0);
-  const hasAny     = cats.some(c => hasCatScore(student.id, c, data.scores, data.term, data.year));
+  const { total: tot, max: mx, has: hasAny, conductPoints } = getScoreSummary(student.id, subj?.id, data);
   const attRate    = calcAttRate(student.id, data.attendance, 'class', subj?.id);
   const morningRate= calcAttRate(student.id, data.attendance, 'morning');
   const grade      = hasAny && subj ? getSubjectGrade(student.id, subj, data.categories, data.scores, data.term, data.year, data.attendance, data.conduct) : null;
@@ -114,6 +112,7 @@ export default function StudentApp({ data, update, student, onLogout, saveProfil
                     </div>
                   )}
 
+                  <div style={sCard}><b>จิตพิสัย</b><div style={{ marginTop:8 }}>{conductPoints === null ? 'ยังไม่มีข้อมูลเช็คชื่อสำหรับคำนวณ' : `${conductPoints} / 5 คะแนน`}</div></div>
                   {cats.map(cat => {
                     const cs  = getCatScore(student.id, cat, data.scores, data.term, data.year);
                     const cm  = getCatMax(cat);

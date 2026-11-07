@@ -1,7 +1,7 @@
 import React, { useState, useMemo } from 'react';
 import { C, GRADE_SCALE } from '../constants';
 import { sCard, sBtn, sInp, sLabel } from '../styles';
-import { sortClasses, getCatMax, getCatScore, getGrade, calcAttRate, gradeColor, gradeBg } from '../utils';
+import { getScoreSummary, getSubjectGrade, sortClasses, getCatMax, getCatScore, calcAttRate, gradeColor, gradeBg } from '../utils';
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 const THAI_MONTHS = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน',
@@ -14,25 +14,25 @@ function thaiDate(iso) {
 }
 
 // Compute per-subject summary for one student
-function getSubjectSummary(sid, subj, cats, scores, term, year) {
+function getSubjectSummary(sid, subj, cats, scores, term, year, attendance, conduct) {
   const subjCats = cats.filter(c => c.subjectId === subj.id);
-  let total = 0, max = 0;
   const catRows = subjCats.map(cat => {
     const catMax   = getCatMax(cat);
     const catScore = getCatScore(sid, cat, scores, term, year);
-    total += catScore;
-    max   += catMax;
     return { cat, catScore, catMax };
   });
-  const grade = max > 0 ? getGrade(total, max) : null;
+  const summary = getScoreSummary(sid, subj.id, { categories: cats, scores, term, year, attendance, conduct });
+  const { total, max } = summary;
+  catRows.push({ cat: { id: 'conduct', name: 'จิตพิสัย' }, catScore: summary.conductPoints ?? '—', catMax: 5 });
+  const grade = getSubjectGrade(sid, subj, cats, scores, term, year, attendance, conduct);
   return { total, max, grade, catRows };
 }
 
 // Compute per-student GPA across all subjects
-function calcGPA(sid, subjects, cats, scores, term, year) {
+function calcGPA(sid, subjects, cats, scores, term, year, attendance, conduct) {
   let totalCredits = 0, totalPoints = 0;
   subjects.forEach(subj => {
-    const { grade } = getSubjectSummary(sid, subj, cats, scores, term, year);
+    const { grade } = getSubjectSummary(sid, subj, cats, scores, term, year, attendance, conduct);
     if (grade) {
       totalCredits += subj.credits || 1;
       totalPoints  += (grade.gpa ?? 0) * (subj.credits || 1);
@@ -51,7 +51,7 @@ function generatePrintHTML(students, data, selectedIds) {
     .sort((a,b) => (a.number||999)-(b.number||999) || (a.name||'').localeCompare(b.name||'','th'))
     .map(student => {
       const rows = subjects.map(subj => {
-        const { total, max, grade, catRows } = getSubjectSummary(student.id, subj, categories, scores, term, year);
+        const { total, max, grade, catRows } = getSubjectSummary(student.id, subj, categories, scores, term, year, attendance, data.conduct);
         const pct = max > 0 ? Math.round((total/max)*100) : '-';
         return `
           <tr>
@@ -68,7 +68,7 @@ function generatePrintHTML(students, data, selectedIds) {
 
       const attRate = calcAttRate(student.id, attendance, 'morning');
       const attStr  = attRate != null ? `${Math.round(attRate)}%` : '-';
-      const gpaData = calcGPA(student.id, subjects, categories, scores, term, year);
+      const gpaData = calcGPA(student.id, subjects, categories, scores, term, year, attendance, data.conduct);
 
       return `
         <div class="card">
@@ -351,7 +351,7 @@ export default function ReportCardPage({ data }) {
 
           {clsStudents.map((stu, idx) => {
             const isSel  = selIds.has(stu.id);
-            const gpaD   = calcGPA(stu.id, subjects, categories, scores, term, year);
+            const gpaD   = calcGPA(stu.id, subjects, categories, scores, term, year, attendance, data.conduct);
             const gpa    = gpaD ? gpaD.gpa : null;
             return (
               <div
@@ -438,7 +438,7 @@ export default function ReportCardPage({ data }) {
             </thead>
             <tbody>
               {subjects.map((subj, idx) => {
-                const { total, max, grade } = getSubjectSummary(previewStu.id, subj, categories, scores, term, year);
+                const { total, max, grade } = getSubjectSummary(previewStu.id, subj, categories, scores, term, year, attendance, data.conduct);
                 const pct = max > 0 ? Math.round((total/max)*100) : null;
                 return (
                   <tr key={subj.id} style={{ background: idx%2 ? '#f8fafc' : '#fff' }}>
@@ -474,7 +474,7 @@ export default function ReportCardPage({ data }) {
             </tbody>
           </table>
           {(() => {
-            const gpaD = calcGPA(previewStu.id, subjects, categories, scores, term, year);
+            const gpaD = calcGPA(previewStu.id, subjects, categories, scores, term, year, attendance, data.conduct);
             const attR = calcAttRate(previewStu.id, attendance, 'morning');
             return (
               <div style={{

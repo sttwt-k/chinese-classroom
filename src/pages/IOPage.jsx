@@ -1,7 +1,7 @@
 import React, { useState, useRef } from 'react';
 import { C, STATUS } from '../constants';
 import { sCard, sBtn, sInp } from '../styles';
-import { todayStr, fmtDate, randomPin, sortClasses, getCatMax, getCatScore, hasCatScore, getSubjectGrade } from '../utils';
+import { getScoreSummary, todayStr, fmtDate, randomPin, sortClasses, getCatMax, getCatScore, getSubjectGrade } from '../utils';
 import { emptyProfile, calcSavings } from '../models';
 import Sheet from '../components/Sheet';
 
@@ -493,9 +493,9 @@ export default function IOPage({ data, update, toast }) {
                 const k = `${c.name}(${getCatMax(c)})`;
                 row[k]  = getCatScore(s.id, c, data.scores, data.term, data.year) || '';
               });
-              const mx  = sCats.reduce((t, c) => t + getCatMax(c), 0);
-              const tot = sCats.reduce((t, c) => t + getCatScore(s.id, c, data.scores, data.term, data.year), 0);
-              const has = sCats.some(c => hasCatScore(s.id, c, data.scores, data.term, data.year));
+              const { total: tot, max: mx, has, conductPoints } = getScoreSummary(s.id, subj.id, data);
+              row['จิตพิสัย(5)'] = conductPoints ?? '';
+              row['คะแนนเต็ม'] = mx;
               row['รวม']  = has ? tot : '';
               row['เกรด'] = has ? (getSubjectGrade(s.id, subj, data.categories, data.scores, data.term, data.year, data.attendance, data.conduct)?.label || '') : '';
               return row;

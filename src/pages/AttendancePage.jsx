@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { C, STATUS, S_ORDER, PERIODS, DAYS } from '../constants';
 import { sCard, sBtn, sInp, sTab } from '../styles';
-import { todayStr, sortClasses } from '../utils';
+import { todayStr, sortClasses, buildAttendanceSummary } from '../utils';
 import Sheet from '../components/Sheet';
 
 export default function AttendancePage({ data, update, initType, initClass, toast }) {
@@ -13,6 +13,7 @@ export default function AttendancePage({ data, update, initType, initClass, toas
   const [scoreModal, setScoreModal] = useState(null);
   const [sheetOpen, setSheetOpen] = useState(null);
   const [ttForm,    setTtForm]    = useState({ subjId:'', classId:'' });
+  const [summaryOpen, setSummaryOpen] = useState(false);
   const [ttView,    setTtView]    = useState(tab === 'class');
 
   useEffect(() => { if (tab === 'morning') setCls(data.homeroom); }, [tab, data.homeroom]);
@@ -84,6 +85,17 @@ export default function AttendancePage({ data, update, initType, initClass, toas
   };
 
   const counted = st => students.filter(s => getRec(s.id)?.status === st).length;
+
+  const summaryText = buildAttendanceSummary({ students, attendance: data.attendance, date, type: tab, classId: cls, subject: subj, period });
+  const copySummary = async () => {
+    try {
+      await navigator.clipboard.writeText(summaryText);
+      toast('คัดลอกสรุปแล้ว พร้อมนำไปส่งให้นักเรียน', 'success');
+    } catch {
+      setSummaryOpen(true);
+      toast('คัดลอกอัตโนมัติไม่ได้ กรุณาเลือกข้อความแล้วคัดลอก', 'error');
+    }
+  };
 
   // ===== TIMETABLE HANDLERS =====
   const handleCellClick = (d, p) => {
@@ -280,6 +292,11 @@ export default function AttendancePage({ data, update, initType, initClass, toas
           {cls && students.length > 0 && (
             <>
               <div style={{ ...sCard, padding:16 }}>
+                <div style={{ fontWeight:700, marginBottom:10 }}>สรุป {students.length} คน · ยังไม่ได้เช็ค {students.filter(s => !getRec(s.id)).length} คน</div>
+                <div style={{ display:'flex', gap:8, flexWrap:'wrap', marginBottom:14 }}>
+                  <button onClick={() => setSummaryOpen(true)} style={sBtn(false, true)}>ดูสรุป</button>
+                  <button onClick={copySummary} style={sBtn(true, true)}>📋 คัดลอกสรุปส่งนักเรียน</button>
+                </div>
                 <div style={{ display:'flex', justifyContent:'space-between', marginBottom:14, fontSize:13, fontWeight:600, flexWrap:'wrap', gap:8 }}>
                   {S_ORDER.map(k => <span key={k} style={{ color:STATUS[k].bg }}>{STATUS[k].short} <b>{counted(k)}</b></span>)}
                 </div>
@@ -413,6 +430,10 @@ export default function AttendancePage({ data, update, initType, initClass, toas
         )}
       </Sheet>
 
+      <Sheet open={summaryOpen} title="สรุปเช็คชื่อส่งนักเรียน" onClose={() => setSummaryOpen(false)}>
+        <textarea aria-label="ข้อความสรุปเช็คชื่อ" readOnly value={summaryText} onFocus={e => e.target.select()} style={{ ...sInp, minHeight:300, width:'100%', boxSizing:'border-box', lineHeight:1.7, marginBottom:12 }}/>
+        <button onClick={copySummary} style={{ ...sBtn(true), width:'100%' }}>📋 คัดลอกสรุป</button>
+      </Sheet>
       <Sheet open={!!scoreModal} title={scoreModal ? `📝 ${STATUS[scoreModal.status]?.label} — คะแนนจิตพิสัย` : ''} onClose={() => setScoreModal(null)}>
         {scoreModal && (
           <div>

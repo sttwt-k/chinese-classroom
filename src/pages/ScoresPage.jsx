@@ -1,7 +1,7 @@
-import React, { useState, useMemo, useCallback } from 'react';
+import React, { useState, useCallback } from 'react';
 import { C, CREDIT_OPTIONS } from '../constants';
 import { sCard, sBtn, sInp, sTab } from '../styles';
-import { todayStr, uid, sortClasses, fmtDate, getGrade, getSubjectGrade, getCatMax, getCatScore, hasCatScore, hasIncomplete, gradeColor, creditToHours } from '../utils';
+import { getScoreSummary, todayStr, uid, sortClasses, fmtDate, getGrade, getSubjectGrade, getCatMax, gradeColor, creditToHours } from '../utils';
 import Sheet from '../components/Sheet';
 
 export default function ScoresPage({ data, update, toast }) {
@@ -176,22 +176,26 @@ export default function ScoresPage({ data, update, toast }) {
                 );
               })}
 
-              <div style={{ marginTop:16, background:C.light, borderRadius:12, padding:'12px 16px' }}>
-                <div style={{ fontSize:14, fontWeight:700, color:C.text, marginBottom:8 }}>รวมทุกหมวด · {subj?.name}</div>
-                {students.map(stu => {
-                  const mx  = subjCats.reduce((s, c) => s + getCatMax(c), 0);
-                  const tot = subjCats.reduce((s, c) => s + getCatScore(stu.id, c, data.scores, data.term, data.year), 0);
-                  const has = subjCats.some(c => hasCatScore(stu.id, c, data.scores, data.term, data.year));
-                  const g   = has ? getGrade(tot, mx) : null;
-                  return (
-                    <div key={stu.id} style={{ display:'flex', justifyContent:'space-between', fontSize:14, padding:'4px 0', borderTop:`1px solid ${C.border}` }}>
-                      <span>{stu.nickname || stu.name}</span>
-                      {has
-                        ? <span style={{ fontWeight:700 }}>{tot}/{mx} <span style={{ color:gradeColor(g), marginLeft:6 }}>{g.label}</span></span>
-                        : <span style={{ color:C.muted }}>-</span>}
-                    </div>
-                  );
-                })}
+            </div>
+          )}
+          {cls && subj && students.length > 0 && (
+            <div style={sCard}>
+              <div style={{ fontWeight:700, marginBottom:8 }}>รวมทุกหมวดและจิตพิสัย · {subj.name}</div>
+              <p style={{ fontSize:13, color:C.muted, lineHeight:1.6 }}>จิตพิสัยเต็ม 5 = คะแนนสะสมเช็คชื่อ ÷ คะแนนกรณีมาครบทุกคาบ × 5 (จำกัด 0–5) รวมเพิ่มจากคะแนนเต็มหมวดอื่น หากต้องการเต็ม 100 ให้หมวดอื่นรวม 95 คะแนน</p>
+              <div style={{ overflowX:'auto' }}>
+                <table style={{ width:'100%', borderCollapse:'collapse', fontSize:14 }}>
+                  <thead><tr><th style={{ textAlign:'left' }}>นักเรียน</th><th>จิตพิสัย /5</th><th>รวม</th><th>เกรด</th></tr></thead>
+                  <tbody>{students.map(stu => {
+                    const summary = getScoreSummary(stu.id, subjId, data);
+                    const grade = getSubjectGrade(stu.id, subj, data.categories, data.scores, data.term, data.year, data.attendance, data.conduct);
+                    return <tr key={stu.id} style={{ borderTop:`1px solid ${C.border}` }}>
+                      <td style={{ padding:'10px 4px' }}>{stu.number || '-'}. {stu.nickname || stu.name}</td>
+                      <td style={{ textAlign:'center' }}>{summary.conductPoints ?? 'ยังไม่มีข้อมูล'}</td>
+                      <td style={{ textAlign:'center', whiteSpace:'nowrap', fontWeight:700 }}>{summary.has ? `${summary.total}/${summary.max}` : '-'}</td>
+                      <td style={{ textAlign:'center', color:gradeColor(grade) }}>{grade?.label || '-'}</td>
+                    </tr>;
+                  })}</tbody>
+                </table>
               </div>
             </div>
           )}
@@ -209,7 +213,7 @@ export default function ScoresPage({ data, update, toast }) {
 
           {data.subjects.map(s => {
             const sCats    = data.categories.filter(c => c.subjectId === s.id);
-            const sMax     = sCats.reduce((t, c) => t + getCatMax(c), 0);
+            const sMax     = sCats.reduce((t, c) => t + getCatMax(c), 0) + 5;
             const expanded = expandedSubj[s.id];
             return (
               <div key={s.id} style={{ ...sCard, marginBottom:12, padding:0, overflow:'hidden' }}>
