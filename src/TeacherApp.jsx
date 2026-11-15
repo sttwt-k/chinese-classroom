@@ -26,14 +26,19 @@ function needsBackupReminder() {
   return days >= 7;
 }
 
-export default function TeacherApp({ data, update, systemActions, saveStatus, onLogout, saveProfileDirect }) {
+export default function TeacherApp({ data, update, systemActions, saveStatus, onLogout, saveProfileDirect, saveClassRoster }) {
   const [page,       setPage]       = useState('home');
+  const [rosterImportClass, setRosterImportClass] = useState('');
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [fabOpen,    setFabOpen]    = useState(false);
   const [attInit,    setAttInit]    = useState(null);
   const [toastMsg,   setToastMsg]   = useState({ msg: '', type: 'info' });
   const [backupBanner, setBackupBanner] = useState(false);
 
+  const navigate = (nextPage, classId = '') => {
+    setRosterImportClass(classId);
+    setPage(nextPage);
+  };
   const toast   = useCallback((msg, type = 'info') => setToastMsg({ msg, type }), []);
   const openAtt = (type, classId) => { setAttInit({ type, classId }); setPage('att'); };
 
@@ -58,7 +63,7 @@ export default function TeacherApp({ data, update, systemActions, saveStatus, on
         appName={data.appName || 'ห้องเรียนของคุณครูต้นฝน'}
         saveStatus={saveStatus}
       />
-      <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} current={page} onNav={setPage} data={data}/>
+      <Drawer open={drawerOpen} onClose={() => setDrawerOpen(false)} current={page} onNav={navigate} data={data}/>
 
       {/* Backup reminder banner */}
       {backupBanner && (
@@ -74,7 +79,7 @@ export default function TeacherApp({ data, update, systemActions, saveStatus, on
           </span>
           <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
             <button
-              onClick={() => { setPage('io'); setBackupBanner(false); }}
+              onClick={() => { navigate('io'); setBackupBanner(false); }}
               style={{ padding: '6px 14px', background: '#F59E0B', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 700, cursor: 'pointer', fontFamily: 'inherit' }}
             >
               สำรองเดี๋ยวนี้
@@ -89,12 +94,12 @@ export default function TeacherApp({ data, update, systemActions, saveStatus, on
         </div>
       )}
 
-      {page === 'home'     && <Dashboard     data={data} setPage={setPage} openAtt={openAtt}/>}
+      {page === 'home'     && <Dashboard     data={data} setPage={navigate} openAtt={openAtt}/>}
       {page === 'att'      && <AttendancePage data={data} update={update} initType={attInit?.type} initClass={attInit?.classId} toast={toast}/>}
       {page === 'score'    && <ScoresPage    data={data} update={update} toast={toast}/>}
-      {page === 'stu'      && <StudentsPage  data={data} update={update} toast={toast}/>}
+      {page === 'stu'      && <StudentsPage  data={data} update={update} toast={toast} saveClassRoster={saveClassRoster} openRosterImport={classId => navigate('io', classId)}/>}
       {page === 'stat'     && <StatsPage     data={data}/>}
-      {page === 'io'       && <IOPage        data={data} update={update} toast={toast}/>}
+      {page === 'io'       && <IOPage        data={data} update={update} toast={toast} saveClassRoster={saveClassRoster} initialClass={rosterImportClass}/>}
       {page === 'homeroom' && <HomeroomPage   data={data} update={update} role="teacher" currentStudentId={null} toast={toast} saveProfileDirect={saveProfileDirect}/>}
       {page === 'cal'      && <CalendarPage   data={data} update={update} role="teacher" toast={toast}/>}
       {page === 'report'   && <ReportCardPage data={data}/>}

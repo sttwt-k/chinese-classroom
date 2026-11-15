@@ -4,7 +4,7 @@ import { sCard, sBtn, sInp, sTab } from '../styles';
 import { randomPin, sortClasses } from '../utils';
 import Sheet from '../components/Sheet';
 
-export default function StudentsPage({ data, update, toast }) {
+export default function StudentsPage({ data, update, toast, saveClassRoster, openRosterImport }) {
   const [sub,        setSub]        = useState('list');
   const [cls,        setCls]        = useState('');
   const [search,     setSearch]     = useState('');
@@ -14,8 +14,10 @@ export default function StudentsPage({ data, update, toast }) {
   const [clsModal,   setClsModal]   = useState(null);
   const [clsForm,    setClsForm]    = useState({ name:'', oldName:'' });
   const [delConfirm, setDelConfirm] = useState(null);
+  const [rosterBusy, setRosterBusy] = useState(false);
 
   const sortedClasses = useMemo(() => sortClasses(data.classes), [data.classes]);
+  const roomStudents = data.students.filter(student => student.classId === cls);
 
   const getClassWeight = c => {
     const m = String(c || '').match(/ม\.(\d+)\/(\d+)/);
@@ -38,13 +40,29 @@ export default function StudentsPage({ data, update, toast }) {
     setErr(''); setModal('add');
   };
 
-  const save = () => {
+  const save = async () => {
     if (!form.id.trim() || !form.name.trim() || !form.classId) return setErr('กรอกรหัส ชื่อ และห้องให้ครบ');
     if (!/^\d{4}$/.test(form.pin)) return setErr('PIN ต้อง 4 หลัก');
     if (modal === 'add' && data.students.find(s => s.id === form.id.trim())) return setErr('รหัสซ้ำ');
-    const stu = { ...form, id:form.id.trim(), number:parseInt(form.number) || null };
+    if (rosterBusy) return;
+    const stu = { ...form, id:form.id.trim(), name:form.name.trim(), number:parseInt(form.number) || null };
+    if (stu.id.includes('/') || stu.id === '__proto__') return setErr('รหัสนักเรียนไม่ถูกต้อง');
+    if (modal === 'add') {
+      const current = data.students.filter(student => student.classId === stu.classId);
+      setRosterBusy(true);
+      try {
+        await saveClassRoster(stu.classId, current, [...current, stu]);
+        setModal(null);
+        toast('บันทึกแล้ว', 'success');
+      } catch (err) {
+        setErr(err.message || 'บันทึกรายชื่อไม่สำเร็จ');
+      } finally {
+        setRosterBusy(false);
+      }
+      return;
+    }
     update(prev => {
-      const sts = modal === 'add' ? [...prev.students, stu] : prev.students.map(s => s.id === form.id ? stu : s);
+      const sts = prev.students.map(s => s.id === form.id ? stu : s);
       return { ...prev, students:sts };
     });
     setModal(null); toast('บันทึกแล้ว', 'success');
@@ -58,6 +76,21 @@ export default function StudentsPage({ data, update, toast }) {
       scores:     prev.scores.filter(r => r.studentId !== delConfirm.stu.id),
     }));
     setDelConfirm(null); toast('ลบนักเรียนแล้ว', 'success');
+  };
+
+  const clearRoom = async () => {
+    if (rosterBusy) return;
+    const { classId, current } = delConfirm;
+    setRosterBusy(true);
+    try {
+      await saveClassRoster(classId, current, []);
+      setDelConfirm(null);
+      toast(`ล้างรายชื่อห้อง ${classId} แล้ว`, 'success');
+    } catch (err) {
+      toast(err.message || 'ล้างรายชื่อไม่สำเร็จ', 'error');
+    } finally {
+      setRosterBusy(false);
+    }
   };
 
   const resetPin = stu => {
@@ -100,12 +133,20 @@ export default function StudentsPage({ data, update, toast }) {
       {/* ===== LIST TAB ===== */}
       {sub === 'list' && (
         <>
-          <button onClick={openAdd} style={{ ...sBtn(true), width:'100%', marginBottom:16, padding:16, fontSize:16, boxShadow:'0 4px 12px rgba(229,57,53,0.3)' }}>+ เพิ่มนักเรียน</button>
           <div style={sCard}>
             <select value={cls} onChange={e => setCls(e.target.value)} style={{ ...sInp, marginBottom:12, fontFamily:'inherit' }}>
               <option value="">ทุกห้อง ({data.students.length} คน)</option>
               {sortedClasses.map(c => <option key={c} value={c}>{c} ({data.students.filter(s => s.classId === c).length} คน)</option>)}
             </select>
+            <div style={{ display:'flex', flexWrap:'wrap', gap:8, marginBottom:12 }}>
+              <button onClick={openAdd} style={sBtn(true, true)}>{cls ? `+ เพิ่มนักเรียน ${cls}` : '+ เพิ่มนักเรียน'}</button>
+              {cls && (
+                <>
+                  <button onClick={() => openRosterImport(cls)} style={sBtn(false, true)}>นำเข้ารายชื่อ</button>
+                  <button disabled={!roomStudents.length} onClick={() => setDelConfirm({ action:'clear', classId:cls, current:roomStudents })} style={{ ...sBtn(false, true), color:C.red, opacity:roomStudents.length ? 1 : 0.5 }}>ล้างรายชื่อทั้งห้อง</button>
+                </>
+              )}
+            </div>
             <input placeholder="🔍 ค้นหา ชื่อ รหัส ชื่อเล่น ชื่อจีน..." value={search} onChange={e => setSearch(e.target.value)} style={sInp}/>
           </div>
 
@@ -159,7 +200,7 @@ export default function StudentsPage({ data, update, toast }) {
       )}
 
       {/* ===== SHEETS ===== */}
-      <Sheet open={!!modal} title={modal === 'add' ? '➕ เพิ่มนักเรียน' : '✏️ แก้ไขข้อมูล'} onClose={() => setModal(null)}>
+      <Sheet open={!!modal} title={modal === 'add' ? '➕ เพิ่มนักเรียน' : '✏️ แก้ไขข้อมูล'} onClose={() => { if (!rosterBusy) setModal(null); }}>
         <div style={{ display:'grid', gridTemplateColumns:'80px 1fr', gap:12, marginBottom:12 }}>
           <div><div style={{ fontSize:13, color:C.muted, marginBottom:6, fontWeight:500 }}>เลขที่</div><input type="number" value={form.number || ''} onChange={e => setForm(p => ({ ...p, number:e.target.value }))} style={sInp} placeholder="-"/></div>
           <div><div style={{ fontSize:13, color:C.muted, marginBottom:6, fontWeight:500 }}>รหัสนักเรียน *</div><input value={form.id || ''} onChange={e => setForm(p => ({ ...p, id:e.target.value }))} disabled={modal === 'edit'} style={{ ...sInp, opacity:modal === 'edit' ? 0.6 : 1 }} placeholder="เช่น 12345"/></div>
@@ -182,8 +223,8 @@ export default function StudentsPage({ data, update, toast }) {
         <input value={form.pin || ''} maxLength={4} onChange={e => setForm(p => ({ ...p, pin:e.target.value.replace(/\D/g, '').slice(0, 4) }))} style={{ ...sInp, marginBottom:20, fontSize:24, letterSpacing:8, textAlign:'center', fontWeight:700 }}/>
         {err && <div style={{ color:C.red, fontSize:14, marginBottom:16, padding:10, background:'#FEF2F2', borderRadius:8, textAlign:'center' }}>{err}</div>}
         <div style={{ display:'flex', gap:12 }}>
-          <button onClick={() => setModal(null)} style={{ ...sBtn(false), flex:1 }}>ยกเลิก</button>
-          <button onClick={save} style={{ ...sBtn(true), flex:1 }}>บันทึก</button>
+          <button disabled={rosterBusy} onClick={() => setModal(null)} style={{ ...sBtn(false), flex:1 }}>ยกเลิก</button>
+          <button disabled={rosterBusy} onClick={save} style={{ ...sBtn(true), flex:1 }}>{rosterBusy ? 'กำลังบันทึก…' : 'บันทึก'}</button>
         </div>
       </Sheet>
 
@@ -196,7 +237,18 @@ export default function StudentsPage({ data, update, toast }) {
         </div>
       </Sheet>
 
-      <Sheet open={!!delConfirm} title={delConfirm?.action === 'del' ? '🚨 ยืนยันการลบ' : '🔑 ตั้งรหัสผ่านใหม่'} onClose={() => setDelConfirm(null)}>
+      <Sheet open={!!delConfirm} title={delConfirm?.action === 'clear' ? `ล้างรายชื่อห้อง ${delConfirm.classId}` : delConfirm?.action === 'del' ? '🚨 ยืนยันการลบ' : '🔑 ตั้งรหัสผ่านใหม่'} onClose={() => { if (!rosterBusy) setDelConfirm(null); }}>
+        {delConfirm?.action === 'clear' && (
+          <>
+            <p style={{ fontSize:15, marginBottom:20 }}>
+              นำรายชื่อทั้ง {delConfirm.current.length} คนออกจากห้อง {delConfirm.classId} ระบบจะเก็บประวัติการเช็กชื่อและคะแนนไว้
+            </p>
+            <div style={{ display:'flex', gap:12 }}>
+              <button disabled={rosterBusy} onClick={() => setDelConfirm(null)} style={{ ...sBtn(false), flex:1 }}>ยกเลิก</button>
+              <button disabled={rosterBusy} onClick={clearRoom} style={{ ...sBtn(true), flex:1 }}>{rosterBusy ? 'กำลังบันทึก…' : 'ล้างรายชื่อ'}</button>
+            </div>
+          </>
+        )}
         {delConfirm?.action === 'del' && (
           <>
             <div style={{ fontSize:15, color:C.text, marginBottom:24, textAlign:'center' }}>
