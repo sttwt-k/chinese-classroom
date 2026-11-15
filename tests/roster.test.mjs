@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import XLSX from 'xlsx';
-import { readRoster, replaceClassRoster } from '../src/roster.js';
+import { defaultRosterSheet, previewClassRosters, readRoster, replaceClassRosters } from '../src/roster.js';
 
 const room = 'ม.5/2';
 const readWorkbook = (workbook, sheetName) => XLSX.utils.sheet_to_json(workbook.Sheets[sheetName], {
@@ -45,11 +45,63 @@ test('replaces or clears a single room and rejects IDs belonging to another room
   ];
   const incoming = [{ id: '001', name: 'ชื่อใหม่' }, { id: '004', name: 'เพิ่มใหม่' }];
   const pins = new Map([['004', '9999']]);
-  assert.deepEqual(replaceClassRoster(current, room, incoming, pins), [
+  assert.deepEqual(replaceClassRosters(current, [{ classId: room, incoming }], pins), [
     current[2],
     { id: '001', classId: room, name: 'ชื่อใหม่', pin: '0056' },
     { id: '004', classId: room, name: 'เพิ่มใหม่', pin: '9999' },
   ]);
-  assert.deepEqual(replaceClassRoster(current, room, [], pins), [current[2]]);
-  assert.throws(() => replaceClassRoster(current, room, [current[2]], pins), /อยู่ห้อง ม\.5\/3/);
+  assert.deepEqual(replaceClassRosters(current, [{ classId: room, incoming: [] }], pins), [current[2]]);
+  assert.throws(() => replaceClassRosters(current, [{ classId: room, incoming: [current[2]] }], pins), /อยู่ห้อง ม\.5\/3/);
+});
+
+test('previews multiple rooms in a shared sheet using the room column', () => {
+  const sheets = [{ name: 'นักเรียน', rows: [
+    ['รหัสนักเรียน', 'ชื่อ-สกุล', 'ห้อง'],
+    ['001', 'ห้องสอง', '5/2'],
+    ['004', 'ห้องสาม', 'ม. 5 / 3'],
+    ['005', 'ห้องอื่น', 'ม.5/4'],
+  ] }];
+  const selections = [
+    { classId: room, sheetName: 'นักเรียน', current: [{ id: '002' }] },
+    { classId: 'ม.5/3', sheetName: 'นักเรียน', current: [{ id: '004' }] },
+  ];
+  const previews = previewClassRosters(sheets, selections);
+  assert.deepEqual(previews.map(({ incoming, added, removed }) => [incoming.map(s => s.id), added, removed]), [
+    [['001'], 1, 1], [['004'], 0, 0],
+  ]);
+  const missing = previewClassRosters(sheets, [...selections, {
+    classId: 'ม.5/1', sheetName: 'นักเรียน', current: [{ id: '006' }],
+  }]);
+  assert.match(missing[2].error, /ไม่พบรายชื่อสำหรับห้อง/);
+});
+
+test('matches separate worksheets, and rejects reusing a sheet without room labels', () => {
+  const sheets = [
+    { name: 'ม.5-2', rows: [['รหัส', 'ชื่อ'], ['001', 'คนแรก']] },
+    { name: '5_3', rows: [['รหัส', 'ชื่อ'], ['002', 'คนที่สอง']] },
+  ];
+  const selections = [room, 'ม.5/3'].map(classId => ({
+    classId, sheetName: defaultRosterSheet(sheets, classId, true), current: [],
+  }));
+  assert.deepEqual(previewClassRosters(sheets, selections).map(room => room.incoming[0].id), ['001', '002']);
+  const reused = [{ ...selections[1], sheetName: selections[0].sheetName }, selections[0]];
+  assert.ok(previewClassRosters(sheets, reused).every(room => /ระบุห้องในคอลัมน์/.test(room.error)));
+  assert.equal(defaultRosterSheet(sheets, 'ม.5/4', true), '');
+});
+
+test('moves a student between selected rooms while keeping the PIN and rejects duplicate IDs', () => {
+  const first = { id: '001', classId: room, pin: '1234' };
+  const untouched = { id: '002', classId: 'ม.5/4', pin: '3456' };
+  const students = [first, untouched];
+  const rooms = [
+    { classId: room, incoming: [] },
+    { classId: 'ม.5/3', incoming: [{ id: '001', name: 'ย้ายห้อง' }] },
+  ];
+  assert.deepEqual(replaceClassRosters(students, rooms, new Map()), [
+    untouched, { ...first, classId: 'ม.5/3', name: 'ย้ายห้อง' },
+  ]);
+  assert.throws(() => replaceClassRosters(students, [
+    { ...rooms[0], incoming: [first] }, rooms[1],
+  ], new Map()), /ซ้ำในรายชื่อ/);
+  assert.deepEqual(replaceClassRosters(students, rooms.map(room => ({ ...room, incoming: [] })), new Map()), [untouched]);
 });

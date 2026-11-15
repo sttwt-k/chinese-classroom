@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { doc, setDoc, getDoc, onSnapshot, runTransaction } from "firebase/firestore";
 import { db, authReady } from "./firebase";
-import { replaceClassRoster } from "./roster";
+import { replaceClassRosters } from "./roster";
 import { randomPin } from "./utils";
 
 // ─── Document layout ─────────────────────────────────────────────────────────
@@ -416,31 +416,32 @@ export default function useFirestore() {
     setData(prev => (prev ? fn(prev) : prev));
   }, []);
 
-  const saveClassRoster = useCallback(async (classId, expectedStudents, incoming) => {
+  const saveClassRosters = useCallback(async (rooms) => {
     if (rosterSavingRef.current || dirtyRef.current) {
       throw new Error('กรุณารอให้ระบบบันทึกข้อมูลก่อน แล้วลองอีกครั้ง');
     }
 
     const mainRef = doc(db, COLLECTION, MAIN_DOC);
-    const pins = new Map(incoming.map(student => [student.id, randomPin()]));
+    const pins = new Map(rooms.flatMap(room => room.incoming.map(student => [student.id, randomPin()])));
     rosterSavingRef.current = true;
     setSaveStatus('saving');
     try {
       const rosterFields = await runTransaction(db, async transaction => {
         const snapshot = await transaction.get(mainRef);
         const main = snapshot.data();
-        if (!main?.classes?.includes(classId)) throw new Error(`ไม่พบห้อง ${classId}`);
-
-        const current = main.students || [];
-        const currentRoom = current.filter(student => student.classId === classId);
+        const current = main?.students || [];
         const rosterSignature = students => JSON.stringify(students.map(student => [
           student.id, student.name, student.number, student.nickname, student.chineseName, student.pin,
         ]));
-        if (rosterSignature(currentRoom) !== rosterSignature(expectedStudents)) {
-          throw new Error('รายชื่อห้องนี้มีการเปลี่ยนแปลง กรุณาปิดหน้าตรวจสอบแล้วลองใหม่');
+        for (const { classId, current: expectedStudents } of rooms) {
+          if (!main?.classes?.includes(classId)) throw new Error(`ไม่พบห้อง ${classId}`);
+          const currentRoom = current.filter(student => student.classId === classId);
+          if (rosterSignature(currentRoom) !== rosterSignature(expectedStudents)) {
+            throw new Error(`รายชื่อห้อง ${classId} มีการเปลี่ยนแปลง กรุณาปิดหน้าตรวจสอบแล้วลองใหม่`);
+          }
         }
 
-        const students = replaceClassRoster(current, classId, incoming, pins);
+        const students = replaceClassRosters(current, rooms, pins);
         const fields = { students, emptyRosterConfirmed: students.length === 0 };
         transaction.update(mainRef, sanitize(fields));
         return fields;
@@ -539,5 +540,5 @@ export default function useFirestore() {
     },
   };
 
-  return { data, loading, error, update, systemActions, saveStatus, backupAlert, restoreFromBackup, saveProfileDirect, saveClassRoster };
+  return { data, loading, error, update, systemActions, saveStatus, backupAlert, restoreFromBackup, saveProfileDirect, saveClassRosters };
 }
