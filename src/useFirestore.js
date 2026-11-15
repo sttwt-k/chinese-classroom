@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { doc, setDoc, getDoc, onSnapshot } from "firebase/firestore";
+import { doc, setDoc, getDoc, onSnapshot, runTransaction } from "firebase/firestore";
 import { db, authReady } from "./firebase";
+import { replaceClassRoster } from "./roster";
+import { randomPin } from "./utils";
 
 // ─── Document layout ─────────────────────────────────────────────────────────
 //  app_data/main_data          ← students, subjects, scores, settings, timetable…
@@ -103,7 +105,7 @@ const mergeData = (mainDoc, attCache) => ({
 
 // ─── ตรวจว่า doc นี้เป็น "ข้อมูลว่างเปล่า" (เพิ่งสร้างใหม่) หรือเปล่า
 const isEmptyDoc = (d) =>
-  !d || ((!d.students || d.students.length === 0) && (!d.subjects || d.subjects.length <= 1));
+  !d || (!d.emptyRosterConfirmed && (!d.students || d.students.length === 0) && (!d.subjects || d.subjects.length <= 1));
 
 export default function useFirestore() {
   const [data,        setData]        = useState(null);
@@ -114,6 +116,8 @@ export default function useFirestore() {
   const [backupAlert, setBackupAlert] = useState(null); // null | { ts, studentCount }
 
   const dirtyRef    = useRef(false);
+  const rosterRef = useRef(null);
+  const rosterSavingRef = useRef(false);
   const attCacheRef = useRef({});   // { "2569-05": [records…], … }
 
   // ─── Realtime listener on main doc ────────────────────────────────────────
@@ -127,6 +131,7 @@ export default function useFirestore() {
     const mainRef   = doc(db, COLLECTION, MAIN_DOC);
     let   mounted   = true;
     let   unsubscribe = () => {};
+    let   snapshotVersion = 0;
 
     const timeoutId = setTimeout(() => {
       setError("การเชื่อมต่อใช้เวลานานผิดปกติ กรุณาตรวจสอบอินเทอร์เน็ตหรือ Firebase Rules");
@@ -152,6 +157,7 @@ export default function useFirestore() {
       async (snap) => {
         clearTimeout(timeoutId);
         if (!mounted) return;
+        const version = ++snapshotVersion;
 
         let mainDoc;
 
@@ -309,6 +315,8 @@ export default function useFirestore() {
             }
           }
 
+          if (version !== snapshotVersion || dirtyRef.current || rosterSavingRef.current) return;
+          rosterRef.current = merged.students;
           setData(merged);
           setLoading(false);
         }
@@ -331,7 +339,7 @@ export default function useFirestore() {
 
     // ป้องกัน: ไม่ save ถ้า students หายหมดแล้วมี backup อยู่
     // (แสดงว่ามีบางอย่างผิดปกติ)
-    if (data.students?.length === 0) {
+    if (data.students?.length === 0 && !data.emptyRosterConfirmed) {
       const backup = loadLocalBackup();
       if (backup?.data?.students?.length > 0) {
         console.warn("⚠️ Save blocked: students is empty but backup exists");
@@ -347,7 +355,16 @@ export default function useFirestore() {
       try {
         const { mainDoc, byMonth } = splitData(data);
 
-        await setDoc(mainRef, sanitize(mainDoc));
+        if (mainDoc.students === rosterRef.current) {
+          // Avoid replacing a roster saved by another teacher while saving other data.
+          const otherFields = { ...mainDoc };
+          delete otherFields.students;
+          delete otherFields.emptyRosterConfirmed;
+          await setDoc(mainRef, sanitize(otherFields), { mergeFields: Object.keys(otherFields) });
+        } else {
+          await setDoc(mainRef, sanitize({ ...mainDoc, emptyRosterConfirmed: mainDoc.students?.length === 0 && !!mainDoc.emptyRosterConfirmed }));
+          rosterRef.current = mainDoc.students;
+        }
 
         for (const [ym, records] of Object.entries(byMonth)) {
           const cached  = JSON.stringify(attCacheRef.current[ym] || []);
@@ -397,6 +414,50 @@ export default function useFirestore() {
   const update = useCallback((fn) => {
     dirtyRef.current = true;
     setData(prev => (prev ? fn(prev) : prev));
+  }, []);
+
+  const saveClassRoster = useCallback(async (classId, expectedStudents, incoming) => {
+    if (rosterSavingRef.current || dirtyRef.current) {
+      throw new Error('กรุณารอให้ระบบบันทึกข้อมูลก่อน แล้วลองอีกครั้ง');
+    }
+
+    const mainRef = doc(db, COLLECTION, MAIN_DOC);
+    const pins = new Map(incoming.map(student => [student.id, randomPin()]));
+    rosterSavingRef.current = true;
+    setSaveStatus('saving');
+    try {
+      const rosterFields = await runTransaction(db, async transaction => {
+        const snapshot = await transaction.get(mainRef);
+        const main = snapshot.data();
+        if (!main?.classes?.includes(classId)) throw new Error(`ไม่พบห้อง ${classId}`);
+
+        const current = main.students || [];
+        const currentRoom = current.filter(student => student.classId === classId);
+        const rosterSignature = students => JSON.stringify(students.map(student => [
+          student.id, student.name, student.number, student.nickname, student.chineseName, student.pin,
+        ]));
+        if (rosterSignature(currentRoom) !== rosterSignature(expectedStudents)) {
+          throw new Error('รายชื่อห้องนี้มีการเปลี่ยนแปลง กรุณาปิดหน้าตรวจสอบแล้วลองใหม่');
+        }
+
+        const students = replaceClassRoster(current, classId, incoming, pins);
+        const fields = { students, emptyRosterConfirmed: students.length === 0 };
+        transaction.update(mainRef, sanitize(fields));
+        return fields;
+      });
+      rosterRef.current = rosterFields.students;
+      setData(prev => {
+        if (prev.students === rosterFields.students) return prev;
+        return { ...prev, ...rosterFields };
+      });
+      setBackupAlert(null);
+      setSaveStatus('saved');
+    } catch (err) {
+      setSaveStatus('error');
+      throw err;
+    } finally {
+      rosterSavingRef.current = false;
+    }
   }, []);
 
   // ─── saveProfileDirect ─────────────────────────────────────────────────────
@@ -478,5 +539,5 @@ export default function useFirestore() {
     },
   };
 
-  return { data, loading, error, update, systemActions, saveStatus, backupAlert, restoreFromBackup, saveProfileDirect };
+  return { data, loading, error, update, systemActions, saveStatus, backupAlert, restoreFromBackup, saveProfileDirect, saveClassRoster };
 }

@@ -1,9 +1,10 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { C, STATUS } from '../constants';
 import { sCard, sBtn, sInp } from '../styles';
-import { getScoreSummary, todayStr, fmtDate, randomPin, sortClasses, getCatMax, getCatScore, getSubjectGrade } from '../utils';
+import { getScoreSummary, todayStr, fmtDate, sortClasses, getCatMax, getCatScore, getSubjectGrade } from '../utils';
 import { emptyProfile, calcSavings } from '../models';
 import Sheet from '../components/Sheet';
+import { readRoster, replaceClassRoster } from '../roster';
 
 // ─── Student Card Printer  (A4 · 1 card per page) ─────────────────────────────
 function buildCardHtml(students, profiles, data) {
@@ -272,9 +273,16 @@ function fmtBackupDate(iso) {
   return `${d.toLocaleDateString('th-TH', { dateStyle: 'long' })} เวลา ${d.toLocaleTimeString('th-TH', { timeStyle: 'short' })}`;
 }
 
-export default function IOPage({ data, update, toast }) {
+export default function IOPage({ data, update, toast, saveClassRoster, initialClass }) {
   const fileRef       = useRef(null);
+  const importSectionRef = useRef(null);
+  const [importClass, setImportClass] = useState(initialClass || '');
   const [importPreview, setImportPreview] = useState(null);
+  const [importBusy, setImportBusy] = useState(false);
+
+  useEffect(() => {
+    if (initialClass) importSectionRef.current?.scrollIntoView({ block: 'start' });
+  }, [initialClass]);
   const [lastBackup, setLastBackup] = useState(() => localStorage.getItem(BACKUP_KEY));
   const [printModal,    setPrintModal]    = useState(false);
   const [printSelected, setPrintSelected] = useState(() => new Set());
@@ -519,8 +527,8 @@ export default function IOPage({ data, update, toast }) {
       const XLSX = await import('xlsx');
       const wb   = XLSX.utils.book_new();
       const sample = [
-        { 'เลขที่': 1, 'รหัสนักเรียน': '12345', 'ชื่อ-สกุล': 'ตัวอย่าง ทดสอบ', 'ชื่อเล่น': 'ตัว', 'ชื่อภาษาจีน': '小明', 'ห้อง': 'ม.5/2', 'PIN': '1234' },
-        { 'เลขที่': 2, 'รหัสนักเรียน': '12346', 'ชื่อ-สกุล': 'ตัวอย่าง 2', 'ชื่อเล่น': '', 'ชื่อภาษาจีน': '', 'ห้อง': 'ม.5/2', 'PIN': '5678' },
+        { 'เลขที่': 1, 'รหัสนักเรียน': '12345', 'ชื่อ-สกุล': 'ตัวอย่าง ทดสอบ', 'ชื่อเล่น': 'ตัว', 'ชื่อภาษาจีน': '小明', 'ห้อง': importClass, 'PIN': '' },
+        { 'เลขที่': 2, 'รหัสนักเรียน': '12346', 'ชื่อ-สกุล': 'ตัวอย่าง 2', 'ชื่อเล่น': '', 'ชื่อภาษาจีน': '', 'ห้อง': importClass, 'PIN': '' },
       ];
       XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(sample), 'นักเรียน');
       XLSX.writeFile(wb, 'template-students.xlsx');
@@ -532,49 +540,62 @@ export default function IOPage({ data, update, toast }) {
 
   // --------- Import ---------
   const handleFile = async e => {
-    const f = e.target.files[0];
-    if (!f) return;
+    const file = e.target.files[0];
+    e.target.value = '';
+    if (!file || !importClass) return;
+
+    setImportBusy(true);
     try {
       const XLSX = await import('xlsx');
-      const wb   = XLSX.read(await f.arrayBuffer());
-      const ws   = wb.Sheets[wb.SheetNames.find(n => n.includes('นักเรียน')) || wb.SheetNames[0]];
-      const rows = XLSX.utils.sheet_to_json(ws)
-        .map(r => ({
-          id:          String(r['รหัสนักเรียน'] || r['รหัส'] || '').trim(),
-          name:        String(r['ชื่อ-สกุล'] || r['ชื่อ'] || '').trim(),
-          nickname:    String(r['ชื่อเล่น'] || '').trim(),
-          chineseName: String(r['ชื่อภาษาจีน'] || '').trim(),
-          number:      parseInt(r['เลขที่']) || null,
-          classId:     String(r['ห้อง'] || '').trim(),
-          pin:         String(r['PIN'] || '').trim() || randomPin(),
-        }))
-        .filter(s => s.id && s.name && s.classId);
-      if (!rows.length) return toast('ไม่พบข้อมูล ตรวจสอบหัวคอลัมน์', 'error');
-      setImportPreview(rows);
-    } catch (ex) {
-      toast('อ่านไฟล์ไม่ได้: ' + ex.message, 'error');
+      const workbook = /\.csv$/i.test(file.name)
+        ? XLSX.read(await file.text(), { type: 'string', raw: true })
+        : XLSX.read(await file.arrayBuffer(), { type: 'array' });
+      const sheets = workbook.SheetNames.map(name => ({
+        name,
+        rows: XLSX.utils.sheet_to_json(workbook.Sheets[name], { header: 1, raw: false, defval: '' }),
+      }));
+      const sheetName = sheets.find(sheet => sheet.name === 'นักเรียน' || sheet.name === 'นักเรียนทั้งหมด')?.name
+        || sheets[0].name;
+      setImportPreview({
+        classId: importClass, sheetName, sheets,
+        current: data.students.filter(student => student.classId === importClass),
+      });
+    } catch (err) {
+      toast('อ่านไฟล์ไม่ได้: ' + err.message, 'error');
+    } finally {
+      setImportBusy(false);
     }
-    e.target.value = '';
   };
 
-  const confirmImport = mode => {
-    if (!importPreview) return;
-    update(prev => {
-      const ex = new Map(prev.students.map(s => [s.id, s]));
-      const nc = new Set(prev.classes);
-      importPreview.forEach(s => {
-        const pin = /^\d{4}$/.test(s.pin) ? s.pin : randomPin();
-        if (ex.has(s.id)) {
-          if (mode === 'replace') ex.set(s.id, { ...ex.get(s.id), ...s, pin });
-        } else {
-          ex.set(s.id, { ...s, pin });
-        }
-        if (s.classId && !nc.has(s.classId)) nc.add(s.classId);
-      });
-      return { ...prev, students: Array.from(ex.values()), classes: sortClasses(Array.from(nc)) };
-    });
-    toast(`นำเข้า ${importPreview.length} รายการ ✓`, 'success');
-    setImportPreview(null);
+  let importedStudents = [];
+  let importError = '';
+  if (importPreview) {
+    const sheet = importPreview.sheets.find(sheet => sheet.name === importPreview.sheetName);
+    try {
+      const rows = readRoster(sheet.rows, importPreview.classId);
+      replaceClassRoster(data.students, importPreview.classId, rows, new Map());
+      importedStudents = rows;
+    } catch (err) {
+      importError = err.message;
+    }
+  }
+  const currentIds = new Set(importPreview?.current.map(student => student.id));
+  const incomingIds = new Set(importedStudents.map(student => student.id));
+  const removedCount = importPreview?.current.filter(student => !incomingIds.has(student.id)).length ?? 0;
+  const addedCount = importedStudents.filter(student => !currentIds.has(student.id)).length;
+
+  const confirmImport = async () => {
+    if (importBusy || !importedStudents.length) return;
+    setImportBusy(true);
+    try {
+      await saveClassRoster(importPreview.classId, importPreview.current, importedStudents);
+      toast(`บันทึกรายชื่อห้อง ${importPreview.classId} แล้ว ${importedStudents.length} คน`, 'success');
+      setImportPreview(null);
+    } catch (err) {
+      toast(err.message || 'บันทึกรายชื่อไม่สำเร็จ กรุณาลองอีกครั้ง', 'error');
+    } finally {
+      setImportBusy(false);
+    }
   };
 
   const exportCounts = {
@@ -712,13 +733,18 @@ export default function IOPage({ data, update, toast }) {
       </div>
 
       {/* Import card */}
-      <div style={sCard}>
+      <div ref={importSectionRef} style={sCard}>
         <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 8 }}>📥 นำเข้านักเรียน</div>
-        <div style={{ fontSize: 13, color: C.muted, marginBottom: 12 }}>คอลัมน์ Excel: เลขที่, รหัสนักเรียน, ชื่อ-สกุล, ชื่อเล่น, ชื่อภาษาจีน, ห้อง, PIN</div>
+        <label htmlFor="roster-class" style={{ display: 'block', fontSize: 13, fontWeight: 600, marginBottom: 6 }}>ห้องที่จะอัปเดต</label>
+        <select id="roster-class" value={importClass} disabled={importBusy} onChange={e => setImportClass(e.target.value)} style={{ ...sInp, marginBottom: 12 }}>
+          <option value="">เลือกห้องเรียน</option>
+          {sortClasses(data.classes).map(room => <option key={room} value={room}>{room}</option>)}
+        </select>
+        <div style={{ fontSize: 13, color: C.muted, marginBottom: 12 }}>ใช้ไฟล์รายชื่อครบทั้งห้อง ระบบจะนำชื่อที่ไม่มีในไฟล์ออกจากห้องที่เลือก ต้องมีรหัสนักเรียนและชื่อ-สกุล</div>
         <button onClick={downloadTemplate} style={{ ...sBtn(false), width: '100%', padding: 12, marginBottom: 12 }}>⬇ ดาวน์โหลดไฟล์ Template</button>
-        <input ref={fileRef} type="file" accept=".xlsx,.xls" onChange={handleFile} style={{ display: 'none' }}/>
-        <button onClick={() => fileRef.current?.click()} style={{ ...sBtn(true), width: '100%', padding: 14, fontSize: 16 }}>
-          📤 เลือกไฟล์ Excel เพื่อนำเข้า
+        <input ref={fileRef} type="file" accept=".xlsx,.xls,.csv" onChange={handleFile} style={{ display: 'none' }}/>
+        <button disabled={!importClass || importBusy} onClick={() => fileRef.current?.click()} style={{ ...sBtn(true), opacity: !importClass || importBusy ? 0.5 : 1, width: '100%', padding: 14, fontSize: 16 }}>
+          {importBusy ? 'กำลังประมวลผล…' : '📤 เลือกไฟล์ Excel หรือ CSV'}
         </button>
       </div>
 
@@ -778,42 +804,48 @@ export default function IOPage({ data, update, toast }) {
         </div>
       </Sheet>
 
-      {/* Import preview modal */}
       <Sheet
         open={!!importPreview}
-        title={`ตรวจสอบก่อนนำเข้า (${importPreview?.length || 0} รายการ)`}
-        onClose={() => setImportPreview(null)}
+        title={importPreview ? `ตรวจสอบรายชื่อห้อง ${importPreview.classId}` : ''}
+        onClose={() => { if (!importBusy) setImportPreview(null); }}
       >
         {importPreview && (
           <div>
-            <div style={{ maxHeight: '42vh', overflowY: 'auto', marginBottom: 16, border: `1px solid ${C.border}`, borderRadius: 12 }}>
-              <div style={{ display: 'grid', gridTemplateColumns: '40px 1fr 1fr 60px', background: C.bg, padding: '10px 12px', fontSize: 13, fontWeight: 700, color: C.muted, borderBottom: `1px solid ${C.border}` }}>
-                <span>เลขที่</span><span>ชื่อ</span><span>ห้อง · รหัส</span><span>สถานะ</span>
-              </div>
-              {importPreview.map((s, i) => {
-                const exists = data.students.some(x => x.id === s.id);
-                return (
-                  <div key={i} style={{ display: 'grid', gridTemplateColumns: '40px 1fr 1fr 60px', padding: '10px 12px', borderBottom: `1px solid ${C.border}`, fontSize: 14, background: exists ? '#FFFBEB' : 'white' }}>
-                    <span style={{ color: C.muted }}>{s.number || '-'}</span>
-                    <span>
-                      <b style={{ fontWeight: 600 }}>{s.name}</b>
-                      {s.nickname ? ` (${s.nickname})` : ''}
-                      {s.chineseName ? <span style={{ color: '#0284C7' }}> {s.chineseName}</span> : null}
-                    </span>
-                    <span style={{ color: C.muted }}>{s.classId} · {s.id}</span>
-                    <span style={{ color: exists ? '#D97706' : '#16A34A', fontSize: 12, fontWeight: 700 }}>{exists ? 'อัปเดต' : 'ใหม่'}</span>
-                  </div>
-                );
-              })}
-            </div>
+            {importPreview.sheets.length > 1 && (
+              <label style={{ display: 'block', marginBottom: 12 }}>
+                ชีตในไฟล์
+                <select
+                  value={importPreview.sheetName}
+                  disabled={importBusy}
+                  onChange={e => setImportPreview({ ...importPreview, sheetName: e.target.value })}
+                  style={sInp}
+                >
+                  {importPreview.sheets.map(sheet => <option key={sheet.name}>{sheet.name}</option>)}
+                </select>
+              </label>
+            )}
+            {importError ? (
+              <p role="alert" style={{ color: C.red }}>{importError}</p>
+            ) : (
+              <>
+                <p style={{ fontSize: 14, marginTop: 0 }}>
+                  รายชื่อใหม่ {importedStudents.length} คน · เพิ่ม {addedCount} · อัปเดต {importedStudents.length - addedCount} · นำออก {removedCount}
+                </p>
+                <ul style={{ maxHeight: '40vh', overflowY: 'auto', margin: '0 0 16px', padding: 0, listStyle: 'none', border: `1px solid ${C.border}`, borderRadius: 12 }}>
+                  {importedStudents.map(student => (
+                    <li key={student.id} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '10px 12px', borderBottom: `1px solid ${C.border}`, fontSize: 14 }}>
+                      <span>{student.number ? `${student.number}. ` : ''}{student.name}</span>
+                      <span style={{ color: C.muted }}>{student.id}</span>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
             <div style={{ display: 'flex', gap: 10, flexDirection: 'column' }}>
-              <button onClick={() => confirmImport('skip')} style={{ ...sBtn(true), padding: 14 }}>
-                เพิ่มเฉพาะรายใหม่ ({importPreview.filter(s => !data.students.some(x => x.id === s.id)).length} คน)
+              <button disabled={importBusy || !importedStudents.length} onClick={confirmImport} style={{ ...sBtn(true), padding: 14, opacity: importBusy || !importedStudents.length ? 0.5 : 1 }}>
+                {importBusy ? 'กำลังบันทึก…' : `แทนที่รายชื่อห้อง ${importPreview.classId}`}
               </button>
-              <button onClick={() => confirmImport('replace')} style={{ ...sBtn(false), padding: 14 }}>
-                เพิ่ม + อัปเดตที่มีอยู่ ({importPreview.length} คน)
-              </button>
-              <button onClick={() => setImportPreview(null)} style={{ ...sBtn(false), padding: 12, color: C.muted, background: 'transparent', border: `1px solid ${C.border}` }}>ยกเลิก</button>
+              <button disabled={importBusy} onClick={() => setImportPreview(null)} style={{ ...sBtn(false), padding: 12 }}>ยกเลิก</button>
             </div>
           </div>
         )}
