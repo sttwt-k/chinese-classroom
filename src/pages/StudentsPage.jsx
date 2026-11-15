@@ -3,10 +3,11 @@ import { C } from '../constants';
 import { sCard, sBtn, sInp, sTab } from '../styles';
 import { randomPin, sortClasses } from '../utils';
 import Sheet from '../components/Sheet';
+import ClassPicker from '../components/ClassPicker';
 
-export default function StudentsPage({ data, update, toast, saveClassRoster, openRosterImport }) {
+export default function StudentsPage({ data, update, toast, saveClassRosters, openRosterImport }) {
   const [sub,        setSub]        = useState('list');
-  const [cls,        setCls]        = useState('');
+  const [selectedRooms, setSelectedRooms] = useState([]);
   const [search,     setSearch]     = useState('');
   const [modal,      setModal]      = useState(null);
   const [form,       setForm]       = useState({});
@@ -17,7 +18,12 @@ export default function StudentsPage({ data, update, toast, saveClassRoster, ope
   const [rosterBusy, setRosterBusy] = useState(false);
 
   const sortedClasses = useMemo(() => sortClasses(data.classes), [data.classes]);
-  const roomStudents = data.students.filter(student => student.classId === cls);
+  const classes = selectedRooms.filter(room => sortedClasses.includes(room));
+  const roomRosters = classes.map(classId => ({
+    classId, current: data.students.filter(student => student.classId === classId), incoming: [],
+  }));
+  const selectedStudentCount = roomRosters.reduce((count, room) => count + room.current.length, 0);
+  const singleRoom = classes.length === 1 ? classes[0] : '';
 
   const getClassWeight = c => {
     const m = String(c || '').match(/ม\.(\d+)\/(\d+)/);
@@ -26,7 +32,7 @@ export default function StudentsPage({ data, update, toast, saveClassRoster, ope
 
   const students = data.students
     .filter(s =>
-      (cls ? s.classId === cls : true) &&
+      (!classes.length || classes.includes(s.classId)) &&
       (search ? s.name.includes(search) || s.id.includes(search) || (s.nickname || '').includes(search) || (s.chineseName || '').includes(search) : true)
     )
     .sort((a, b) => {
@@ -36,7 +42,7 @@ export default function StudentsPage({ data, update, toast, saveClassRoster, ope
     });
 
   const openAdd = () => {
-    setForm({ id:'', name:'', nickname:'', chineseName:'', number:'', classId:cls || sortedClasses[0] || '', pin:randomPin() });
+    setForm({ id:'', name:'', nickname:'', chineseName:'', number:'', classId:singleRoom || (!classes.length ? sortedClasses[0] || '' : ''), pin:randomPin() });
     setErr(''); setModal('add');
   };
 
@@ -51,7 +57,7 @@ export default function StudentsPage({ data, update, toast, saveClassRoster, ope
       const current = data.students.filter(student => student.classId === stu.classId);
       setRosterBusy(true);
       try {
-        await saveClassRoster(stu.classId, current, [...current, stu]);
+        await saveClassRosters([{ classId: stu.classId, current, incoming: [...current, stu] }]);
         setModal(null);
         toast('บันทึกแล้ว', 'success');
       } catch (err) {
@@ -78,14 +84,14 @@ export default function StudentsPage({ data, update, toast, saveClassRoster, ope
     setDelConfirm(null); toast('ลบนักเรียนแล้ว', 'success');
   };
 
-  const clearRoom = async () => {
+  const clearRooms = async () => {
     if (rosterBusy) return;
-    const { classId, current } = delConfirm;
+    const { rooms } = delConfirm;
     setRosterBusy(true);
     try {
-      await saveClassRoster(classId, current, []);
+      await saveClassRosters(rooms);
       setDelConfirm(null);
-      toast(`ล้างรายชื่อห้อง ${classId} แล้ว`, 'success');
+      toast(`ล้างรายชื่อแล้ว ${rooms.length} ห้อง`, 'success');
     } catch (err) {
       toast(err.message || 'ล้างรายชื่อไม่สำเร็จ', 'error');
     } finally {
@@ -134,16 +140,15 @@ export default function StudentsPage({ data, update, toast, saveClassRoster, ope
       {sub === 'list' && (
         <>
           <div style={sCard}>
-            <select value={cls} onChange={e => setCls(e.target.value)} style={{ ...sInp, marginBottom:12, fontFamily:'inherit' }}>
-              <option value="">ทุกห้อง ({data.students.length} คน)</option>
-              {sortedClasses.map(c => <option key={c} value={c}>{c} ({data.students.filter(s => s.classId === c).length} คน)</option>)}
-            </select>
+            <ClassPicker classes={sortedClasses} selected={classes} onChange={setSelectedRooms} emptyLabel={`ทุกห้อง (${data.students.length} คน) · เลือกห้องเรียน`} />
             <div style={{ display:'flex', flexWrap:'wrap', gap:8, marginBottom:12 }}>
-              <button onClick={openAdd} style={sBtn(true, true)}>{cls ? `+ เพิ่มนักเรียน ${cls}` : '+ เพิ่มนักเรียน'}</button>
-              {cls && (
+              <button onClick={openAdd} style={sBtn(true, true)}>{singleRoom ? `+ เพิ่มนักเรียน ${singleRoom}` : '+ เพิ่มนักเรียน'}</button>
+              {classes.length > 0 && (
                 <>
-                  <button onClick={() => openRosterImport(cls)} style={sBtn(false, true)}>นำเข้ารายชื่อ</button>
-                  <button disabled={!roomStudents.length} onClick={() => setDelConfirm({ action:'clear', classId:cls, current:roomStudents })} style={{ ...sBtn(false, true), color:C.red, opacity:roomStudents.length ? 1 : 0.5 }}>ล้างรายชื่อทั้งห้อง</button>
+                  <button onClick={() => openRosterImport(classes)} style={sBtn(false, true)}>นำเข้ารายชื่อ</button>
+                  <button disabled={!selectedStudentCount} onClick={() => setDelConfirm({ action:'clear', rooms:roomRosters, count:selectedStudentCount })} style={{ ...sBtn(false, true), color:C.red, opacity:selectedStudentCount ? 1 : 0.5 }}>
+                    ล้างรายชื่อห้องที่เลือก
+                  </button>
                 </>
               )}
             </div>
@@ -237,15 +242,18 @@ export default function StudentsPage({ data, update, toast, saveClassRoster, ope
         </div>
       </Sheet>
 
-      <Sheet open={!!delConfirm} title={delConfirm?.action === 'clear' ? `ล้างรายชื่อห้อง ${delConfirm.classId}` : delConfirm?.action === 'del' ? '🚨 ยืนยันการลบ' : '🔑 ตั้งรหัสผ่านใหม่'} onClose={() => { if (!rosterBusy) setDelConfirm(null); }}>
+      <Sheet open={!!delConfirm} title={delConfirm?.action === 'clear' ? `ล้างรายชื่อ ${delConfirm.rooms.length} ห้อง` : delConfirm?.action === 'del' ? '🚨 ยืนยันการลบ' : '🔑 ตั้งรหัสผ่านใหม่'} onClose={() => { if (!rosterBusy) setDelConfirm(null); }}>
         {delConfirm?.action === 'clear' && (
           <>
             <p style={{ fontSize:15, marginBottom:20 }}>
-              นำรายชื่อทั้ง {delConfirm.current.length} คนออกจากห้อง {delConfirm.classId} ระบบจะเก็บประวัติการเช็กชื่อและคะแนนไว้
+              นำรายชื่อ {delConfirm.count} คนออกจากห้องที่เลือก ระบบจะเก็บประวัติการเช็กชื่อและคะแนนไว้
             </p>
+            <ul style={{ fontSize:14, maxHeight:'35vh', overflowY:'auto', paddingLeft:24 }}>
+              {delConfirm.rooms.map(room => <li key={room.classId}>{room.classId} · {room.current.length} คน</li>)}
+            </ul>
             <div style={{ display:'flex', gap:12 }}>
               <button disabled={rosterBusy} onClick={() => setDelConfirm(null)} style={{ ...sBtn(false), flex:1 }}>ยกเลิก</button>
-              <button disabled={rosterBusy} onClick={clearRoom} style={{ ...sBtn(true), flex:1 }}>{rosterBusy ? 'กำลังบันทึก…' : 'ล้างรายชื่อ'}</button>
+              <button disabled={rosterBusy} onClick={clearRooms} style={{ ...sBtn(true), flex:1 }}>{rosterBusy ? 'กำลังบันทึก…' : 'ล้างรายชื่อ'}</button>
             </div>
           </>
         )}

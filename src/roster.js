@@ -14,7 +14,7 @@ const cellText = value => String(value ?? '').trim();
 const normalizeHeader = value => cellText(value).toLowerCase().replace(/[\s–—-]/g, '');
 const normalizeClass = value => cellText(value).replace(/\s/g, '').replace(/^ม\.?(?=\d)/, '');
 
-export function readRoster(sheetRows, classId) {
+export function readRoster(sheetRows, classId, { requireRoom = false } = {}) {
   const headerIndex = sheetRows.findIndex(row => {
     const keys = row.map(normalizeHeader);
     return columns.id.some(key => keys.includes(normalizeHeader(key))) &&
@@ -31,6 +31,9 @@ export function readRoster(sheetRows, classId) {
     .filter(({ row }) => row.some(value => cellText(value)));
   const target = normalizeClass(classId);
   const hasClassValues = rows.some(({ row }) => cellText(row[indices.classId]));
+  if (requireRoom && !hasClassValues) {
+    throw new Error('ระบุห้องในคอลัมน์ห้องเรียน หรือเลือกชีตแยกสำหรับแต่ละห้อง');
+  }
   const ids = new Set();
   const students = [];
 
@@ -68,24 +71,64 @@ export function readRoster(sheetRows, classId) {
   return students;
 }
 
-export function replaceClassRoster(students, classId, incoming, pins) {
-  const otherStudents = students.filter(student => student.classId !== classId);
+export function defaultRosterSheet(sheets, classId, multipleRooms = false) {
+  const normalizeSheet = value => normalizeClass(value).replace(/[-_]/g, '/');
+  return sheets.find(sheet => normalizeSheet(sheet.name) === normalizeSheet(classId))?.name
+    || sheets.find(sheet => sheet.name === 'นักเรียน' || sheet.name === 'นักเรียนทั้งหมด')?.name
+    || (multipleRooms && sheets.length > 1 ? '' : sheets[0].name);
+}
+
+export function previewClassRosters(sheets, rooms) {
+  const sheetByName = new Map(sheets.map(sheet => [sheet.name, sheet]));
+  const roomCounts = new Map();
+  for (const { sheetName } of rooms) {
+    roomCounts.set(sheetName, (roomCounts.get(sheetName) || 0) + 1);
+  }
+
+  return rooms.map(room => {
+    try {
+      const sheet = sheetByName.get(room.sheetName);
+      if (!sheet) throw new Error('เลือกชีตที่มีรายชื่อของห้องนี้');
+      const incoming = readRoster(sheet.rows, room.classId, { requireRoom: roomCounts.get(room.sheetName) > 1 });
+      const currentIds = new Set(room.current.map(student => student.id));
+      const incomingIds = new Set(incoming.map(student => student.id));
+      const added = incoming.filter(student => !currentIds.has(student.id)).length;
+      const removed = room.current.filter(student => !incomingIds.has(student.id)).length;
+      return { ...room, incoming, added, removed };
+    } catch (err) {
+      return { ...room, error: err.message };
+    }
+  });
+}
+
+export function replaceClassRosters(students, rooms, pins) {
+  const targets = new Set(rooms.map(room => room.classId));
+  const otherStudents = students.filter(student => !targets.has(student.classId));
   const otherById = new Map(otherStudents.map(student => [student.id, student]));
   const currentById = new Map(students.map(student => [student.id, student]));
+  const nextRoomById = new Map();
+  const replacements = [];
 
-  const replacements = incoming.map(student => {
-    const conflict = otherById.get(student.id);
-    if (conflict) {
-      throw new Error(`รหัส ${student.id} อยู่ห้อง ${conflict.classId} กรุณาย้ายห้องในหน้ารายชื่อก่อน`);
+  for (const { classId, incoming } of rooms) {
+    for (const student of incoming) {
+      const duplicateRoom = nextRoomById.get(student.id);
+      if (duplicateRoom) {
+        throw new Error(`รหัส ${student.id} ซ้ำในรายชื่อที่นำเข้า (${duplicateRoom} และ ${classId})`);
+      }
+      const conflict = otherById.get(student.id);
+      if (conflict) {
+        throw new Error(`รหัส ${student.id} อยู่ห้อง ${conflict.classId} กรุณาเลือกห้องเดิมด้วย หรือย้ายห้องในหน้ารายชื่อก่อน`);
+      }
+      const current = currentById.get(student.id);
+      nextRoomById.set(student.id, classId);
+      replacements.push({
+        ...current,
+        ...student,
+        classId,
+        pin: student.pin || current?.pin || pins.get(student.id),
+      });
     }
-    const current = currentById.get(student.id);
-    return {
-      ...current,
-      ...student,
-      classId,
-      pin: student.pin || current?.pin || pins.get(student.id),
-    };
-  });
+  }
 
   return [...otherStudents, ...replacements];
 }

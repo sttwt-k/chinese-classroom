@@ -26,17 +26,17 @@ function needsBackupReminder() {
   return days >= 7;
 }
 
-export default function TeacherApp({ data, update, systemActions, saveStatus, onLogout, saveProfileDirect, saveClassRoster }) {
+export default function TeacherApp({ data, update, systemActions, saveStatus, onLogout, saveProfileDirect, saveClassRosters }) {
   const [page,       setPage]       = useState('home');
-  const [rosterImportClass, setRosterImportClass] = useState('');
+  const [rosterImportClasses, setRosterImportClasses] = useState([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [fabOpen,    setFabOpen]    = useState(false);
   const [attInit,    setAttInit]    = useState(null);
   const [toastMsg,   setToastMsg]   = useState({ msg: '', type: 'info' });
   const [backupBanner, setBackupBanner] = useState(false);
 
-  const navigate = (nextPage, classId = '') => {
-    setRosterImportClass(classId);
+  const navigate = (nextPage, classIds = []) => {
+    setRosterImportClasses(classIds);
     setPage(nextPage);
   };
   const toast   = useCallback((msg, type = 'info') => setToastMsg({ msg, type }), []);
@@ -97,9 +97,9 @@ export default function TeacherApp({ data, update, systemActions, saveStatus, on
       {page === 'home'     && <Dashboard     data={data} setPage={navigate} openAtt={openAtt}/>}
       {page === 'att'      && <AttendancePage data={data} update={update} initType={attInit?.type} initClass={attInit?.classId} toast={toast}/>}
       {page === 'score'    && <ScoresPage    data={data} update={update} toast={toast}/>}
-      {page === 'stu'      && <StudentsPage  data={data} update={update} toast={toast} saveClassRoster={saveClassRoster} openRosterImport={classId => navigate('io', classId)}/>}
+      {page === 'stu'      && <StudentsPage  data={data} update={update} toast={toast} saveClassRosters={saveClassRosters} openRosterImport={classIds => navigate('io', classIds)}/>}
       {page === 'stat'     && <StatsPage     data={data}/>}
-      {page === 'io'       && <IOPage        data={data} update={update} toast={toast} saveClassRoster={saveClassRoster} initialClass={rosterImportClass}/>}
+      {page === 'io'       && <IOPage        data={data} update={update} toast={toast} saveClassRosters={saveClassRosters} initialClasses={rosterImportClasses}/>}
       {page === 'homeroom' && <HomeroomPage   data={data} update={update} role="teacher" currentStudentId={null} toast={toast} saveProfileDirect={saveProfileDirect}/>}
       {page === 'cal'      && <CalendarPage   data={data} update={update} role="teacher" toast={toast}/>}
       {page === 'report'   && <ReportCardPage data={data}/>}

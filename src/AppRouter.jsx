@@ -71,7 +71,7 @@ function BackupAlertModal({ alert, onRestore, onDismiss }) {
 }
 
 export default function AppRouter() {
-  const { data, loading, error, update, systemActions, saveStatus, backupAlert, restoreFromBackup, saveProfileDirect, saveClassRoster } = useFirestore();
+  const { data, loading, error, update, systemActions, saveStatus, backupAlert, restoreFromBackup, saveProfileDirect, saveClassRosters } = useFirestore();
   const [alertDismissed, setAlertDismissed] = useState(false);
 
   const [user, setUser] = useState(() => {
@@ -155,7 +155,7 @@ export default function AppRouter() {
 
   // Teacher
   if (user.role === 'teacher') {
-    return <TeacherApp data={data} update={update} systemActions={systemActions} saveStatus={saveStatus} onLogout={handleLogout} saveProfileDirect={saveProfileDirect} saveClassRoster={saveClassRoster}/>;
+    return <TeacherApp data={data} update={update} systemActions={systemActions} saveStatus={saveStatus} onLogout={handleLogout} saveProfileDirect={saveProfileDirect} saveClassRosters={saveClassRosters}/>;
   }
 
   // Student
